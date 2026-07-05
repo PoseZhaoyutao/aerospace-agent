@@ -1,0 +1,630 @@
+{
+  "nodes": {
+    "two_body": {
+      "type": "concept",
+      "content": "二体问题: 两质点在万有引力下的运动, 是所有轨道力学的基础; 解析解为圆锥曲线轨道",
+      "metadata": {
+        "aliases": [
+          "二体",
+          "二体问题",
+          "two-body",
+          "two body"
+        ]
+      }
+    },
+    "angular_momentum": {
+      "type": "concept",
+      "content": "角动量守恒: 中心引力场下比角动量 h = r × v 守恒, 轨道位于固定平面内",
+      "metadata": {
+        "aliases": [
+          "角动量",
+          "角动量守恒",
+          "angular momentum"
+        ]
+      }
+    },
+    "energy_conservation": {
+      "type": "concept",
+      "content": "能量守恒: 比机械能 ε = v²/2 - μ/r = -μ/(2a) 守恒",
+      "metadata": {
+        "aliases": [
+          "能量守恒",
+          "机械能",
+          "energy conservation"
+        ]
+      }
+    },
+    "orbital_elements": {
+      "type": "concept",
+      "content": "经典轨道根数: 半长轴 a, 偏心率 e, 倾角 i, 升交点赤经 Ω, 近地点幅角 ω, 真近点角 ν, 共六要素描述轨道",
+      "metadata": {
+        "aliases": [
+          "轨道根数",
+          "轨道要素",
+          "orbital elements",
+          "六要素"
+        ]
+      }
+    },
+    "soi": {
+      "type": "concept",
+      "content": "引力作用球 SOI: r_SOI = a·(μ_moon/μ_earth)^(2/5), 某天体引力主导的范围, 是拼凑圆锥的分段边界",
+      "metadata": {
+        "aliases": [
+          "soi",
+          "引力作用球",
+          "作用球",
+          "sphere of influence"
+        ]
+      }
+    },
+    "c3": {
+      "type": "concept",
+      "content": "特征能量 C3 = v_inf²: 逃逸双曲剩余速度的平方, 衡量发射能量需求",
+      "metadata": {
+        "aliases": [
+          "c3",
+          "特征能量",
+          "characteristic energy",
+          "v_inf"
+        ]
+      }
+    },
+    "delta_v": {
+      "type": "concept",
+      "content": "速度增量 Δv 预算: 任务总冲量需求, 由 vis-viva 方程估算各段",
+      "metadata": {
+        "aliases": [
+          "delta-v",
+          "delta v",
+          "速度增量",
+          "dv",
+          "Δv"
+        ]
+      }
+    },
+    "phase_angle": {
+      "type": "concept",
+      "content": "相位角: 发射时刻目标天体相对出发点的角位置, 决定转移时机与发射窗口",
+      "metadata": {
+        "aliases": [
+          "相位角",
+          "phase angle",
+          "相位"
+        ]
+      }
+    },
+    "launch_window": {
+      "type": "concept",
+      "content": "发射窗口: 满足相位角/光照/测控等约束的可发射时段",
+      "metadata": {
+        "aliases": [
+          "发射窗口",
+          "launch window",
+          "窗口"
+        ]
+      }
+    },
+    "hohmann": {
+      "type": "concept",
+      "content": "Hohmann 转移: 共面圆轨道间最省能量的双脉冲椭圆转移, 半长轴 a_t = (r1+r2)/2, 由 vis-viva 求 Δv",
+      "metadata": {
+        "aliases": [
+          "hohmann",
+          "霍曼",
+          "霍曼转移",
+          "hohmann转移",
+          "hohmann transfer"
+        ]
+      }
+    },
+    "lambert": {
+      "type": "concept",
+      "content": "Lambert 问题: 已知两端点位置向量与飞行时间, 求连接轨道; Hohmann 的通用化 (非共面/任意时间)",
+      "metadata": {
+        "aliases": [
+          "lambert",
+          "兰伯特",
+          "lambert问题",
+          "lambert problem"
+        ]
+      }
+    },
+    "patched_conic": {
+      "type": "concept",
+      "content": "拼凑圆锥近似: 把多体问题拆成二体段, 在 SOI 边界做速度匹配, 地月转移的核心简化方法",
+      "metadata": {
+        "aliases": [
+          "拼凑圆锥",
+          "patched conic",
+          "圆锥拼接",
+          "拼接圆锥"
+        ]
+      }
+    },
+    "true_anomaly": {
+      "type": "concept",
+      "content": "真近点角 ν: 近地点到当前位置的真角, 直接描述位置",
+      "metadata": {
+        "aliases": [
+          "真近点角",
+          "true anomaly",
+          "ν"
+        ]
+      }
+    },
+    "mean_anomaly": {
+      "type": "concept",
+      "content": "平近点角 M = n·(t-tp): 平均运动乘时间, 与时间线性, 输入开普勒方程",
+      "metadata": {
+        "aliases": [
+          "平近点角",
+          "mean anomaly",
+          "M"
+        ]
+      }
+    },
+    "eccentric_anomaly": {
+      "type": "concept",
+      "content": "偏近点角 E: 辅助变量, 经开普勒方程 M = E - e·sinE 与 M 关联",
+      "metadata": {
+        "aliases": [
+          "偏近点角",
+          "eccentric anomaly",
+          "E"
+        ]
+      }
+    },
+    "kepler_equation": {
+      "type": "formula",
+      "content": "开普勒方程: M = E - e·sinE, 由平近点角 M 迭代求偏近点角 E, 再得真近点角 ν, 用于二体位置/时间转换",
+      "metadata": {
+        "aliases": [
+          "开普勒方程",
+          "kepler equation",
+          "kepler"
+        ]
+      }
+    },
+    "vis_viva": {
+      "type": "formula",
+      "content": "vis-viva (活力) 方程: v² = μ(2/r - 1/a), 任意圆锥轨道任意点半径处速度, 由能量守恒导出, 是 Δv 计算核心",
+      "metadata": {
+        "aliases": [
+          "vis-viva",
+          "vis viva",
+          "活力公式",
+          "活力方程",
+          "visviva"
+        ]
+      }
+    },
+    "orekit": {
+      "type": "tool",
+      "content": "Orekit: CNES 开源的航天动力学基础库 (Java/Python), 支持二体/数值传播/历书, 本项目 astropy_tool/orekit_tool 即封装之",
+      "metadata": {
+        "aliases": [
+          "orekit"
+        ]
+      }
+    },
+    "gmat": {
+      "type": "tool",
+      "content": "GMAT: NASA 开源任务分析工具, 支持拼凑圆锥/Lambert 优化/数值积分, gmat_tool 封装之",
+      "metadata": {
+        "aliases": [
+          "gmat"
+        ]
+      }
+    },
+    "spiceypy": {
+      "type": "tool",
+      "content": "SPICE (NAIF): NASA 行星历书/姿态/事件工具, spiceypy 为 Python 封装, 提供月球/行星精确星历, 用于发射窗口计算",
+      "metadata": {
+        "aliases": [
+          "spiceypy",
+          "spice",
+          "历书"
+        ]
+      }
+    },
+    "basilisk": {
+      "type": "tool",
+      "content": "Basilisk: CU 多体/航天器 GNC 仿真框架, 支持六自由度与多体动力学, basilisk_tool 封装之",
+      "metadata": {
+        "aliases": [
+          "basilisk"
+        ]
+      }
+    },
+    "stk": {
+      "type": "tool",
+      "content": "STK: AGI 商业航天任务分析软件, 行业标准, stk_tool 封装之",
+      "metadata": {
+        "aliases": [
+          "stk"
+        ]
+      }
+    },
+    "tli": {
+      "type": "mission",
+      "content": "地月注入 TLI (Trans-Lunar Injection): 把航天器从地球停泊轨道送入地月转移轨道的脉冲, 需 C3/v_inf 与 vis-viva 估算 Δv",
+      "metadata": {
+        "aliases": [
+          "tli",
+          "地月注入",
+          "trans-lunar injection",
+          "trans lunar"
+        ]
+      }
+    },
+    "loi": {
+      "type": "mission",
+      "content": "环月注入 LOI (Lunar Orbit Insertion): 在近月点制动, 把双曲接近轨道捕获为环月轨道, Δv 由 vis-viva 计算",
+      "metadata": {
+        "aliases": [
+          "loi",
+          "环月注入",
+          "lunar orbit insertion"
+        ]
+      }
+    },
+    "earth_moon_transfer": {
+      "type": "mission",
+      "content": "地月转移: 从地球到月球的轨道设计, 核心方法为拼凑圆锥近似 + Hohmann/精确实例; 流程 TLI → 地心段 → SOI → 月心段 → LOI, 需发射窗口(相位角)匹配",
+      "metadata": {
+        "aliases": [
+          "地月转移",
+          "earth-moon transfer",
+          "earth moon transfer",
+          "登月转移",
+          "月球转移"
+        ]
+      }
+    }
+  },
+  "edges": [
+    {
+      "src": "two_body",
+      "dst": "angular_momentum",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "two_body",
+      "dst": "energy_conservation",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "orbital_elements",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "soi",
+      "dst": "patched_conic",
+      "relation": "constraint_of",
+      "weight": 0.9
+    },
+    {
+      "src": "c3",
+      "dst": "vis_viva",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "c3",
+      "dst": "tli",
+      "relation": "constraint_of",
+      "weight": 0.9
+    },
+    {
+      "src": "delta_v",
+      "dst": "vis_viva",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "delta_v",
+      "dst": "earth_moon_transfer",
+      "relation": "constraint_of",
+      "weight": 0.9
+    },
+    {
+      "src": "phase_angle",
+      "dst": "orbital_elements",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "phase_angle",
+      "dst": "launch_window",
+      "relation": "constraint_of",
+      "weight": 0.9
+    },
+    {
+      "src": "launch_window",
+      "dst": "phase_angle",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "launch_window",
+      "dst": "orbital_elements",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "launch_window",
+      "dst": "earth_moon_transfer",
+      "relation": "constraint_of",
+      "weight": 0.9
+    },
+    {
+      "src": "hohmann",
+      "dst": "vis_viva",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "hohmann",
+      "dst": "kepler_equation",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "hohmann",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "hohmann",
+      "dst": "earth_moon_transfer",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "hohmann",
+      "dst": "lambert",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "lambert",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "lambert",
+      "dst": "earth_moon_transfer",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "lambert",
+      "dst": "gmat",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "lambert",
+      "dst": "hohmann",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "patched_conic",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "patched_conic",
+      "dst": "soi",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "patched_conic",
+      "dst": "earth_moon_transfer",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "patched_conic",
+      "dst": "gmat",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "true_anomaly",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "mean_anomaly",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "eccentric_anomaly",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "hohmann",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "orekit",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "kepler_equation",
+      "dst": "gmat",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "energy_conservation",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "two_body",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "hohmann",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "tli",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "loi",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "c3",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "delta_v",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "vis_viva",
+      "dst": "orekit",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "orekit",
+      "dst": "basilisk",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "gmat",
+      "dst": "stk",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "spiceypy",
+      "dst": "earth_moon_transfer",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "basilisk",
+      "dst": "orekit",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "stk",
+      "dst": "gmat",
+      "relation": "alternative_to",
+      "weight": 0.8
+    },
+    {
+      "src": "tli",
+      "dst": "vis_viva",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "tli",
+      "dst": "c3",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "loi",
+      "dst": "vis_viva",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "patched_conic",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "hohmann",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "tli",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "loi",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "launch_window",
+      "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "earth_moon_transfer",
+      "dst": "phase_angle",
+      "relation": "depends_on",
+      "weight": 1.0
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Python 字节码与缓存
+__pycache__/
+*.pyc
+
+# 运行时数据与生成物
+/data/memory.json
+/data/offload/
+/reports/*.html
+/demo_outputs/*.png
+
+# 环境与密钥
+.env
+
+# 打包产物
+*.egg-info
+build/
+dist/

@@ -1,0 +1,178 @@
+[
+  {
+    "text": "vis-viva (活力) 方程: v² = μ(2/r − 1/a)。任意圆锥轨道任意点半径处的速度, 由能量守恒 ε=v²/2−μ/r=−μ/(2a) 导出。是 Hohmann 转移、TLI、LOI 等 Δv 计算的核心公式。",
+    "metadata": {
+      "source": "default",
+      "node_id": "vis_viva",
+      "type": "formula"
+    }
+  },
+  {
+    "text": "开普勒方程 M = E − e·sinE。给定平近点角 M (与时间线性) 迭代求偏近点角 E, 再由 tan(ν/2)=√((1+e)/(1−e))·tan(E/2) 得真近点角 ν。用于二体位置/时间转换, 依赖二体问题。",
+    "metadata": {
+      "source": "default",
+      "node_id": "kepler_equation",
+      "type": "formula"
+    }
+  },
+  {
+    "text": "Hohmann 转移: 共面圆轨道间最省能量的双脉冲椭圆转移。转移椭圆半长轴 a_t=(r1+r2)/2, Δv1=√(μ(2/r1−1/a_t))−√(μ/r1), Δv2=√(μ/r2)−√(μ(2/r2−1/a_t)), 飞行时间 t=π√(a_t³/μ)。由 vis-viva 推导。",
+    "metadata": {
+      "source": "default",
+      "node_id": "hohmann",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "Lambert 问题: 已知两端点位置向量 r1, r2 与飞行时间 Δt, 求连接轨道 (速度 v1, v2)。是 Hohmann 的通用化 (支持非共面/任意时间), 依赖二体问题; 常用普适变量法求解。",
+    "metadata": {
+      "source": "default",
+      "node_id": "lambert",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "拼凑圆锥近似 (patched conic): 把多体问题拆成若干二体段, 在引力作用球 (SOI) 边界做速度匹配。地月转移分地心段 (双曲逃逸) 与月心段 (双曲接近+近月制动), 是地月转移的核心简化方法。",
+    "metadata": {
+      "source": "default",
+      "node_id": "patched_conic",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "引力作用球 SOI: r_SOI = a·(μ_moon/μ_earth)^(2/5) (Laplace)。月球 SOI ≈ 66183 km。SOI 是拼凑圆锥的分段边界, 约束该方法适用范围。",
+    "metadata": {
+      "source": "default",
+      "node_id": "soi",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "特征能量 C3 = v_∞², 即逃逸双曲剩余速度的平方。由 vis-viva 双曲情形 v_∞²=−μ/a (a<0) 给出。C3 衡量发射能量需求, 约束 TLI 所需 Δv; C3 越小越省运载能力。",
+    "metadata": {
+      "source": "default",
+      "node_id": "c3",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "地月注入 TLI (Trans-Lunar Injection): 在地球停泊轨道近地点施加脉冲, 把航天器送入地月转移轨道 (双曲逃逸地心段)。Δv 由 vis-viva 估算, 需满足 C3 要求; 时机由发射窗口/相位角决定。",
+    "metadata": {
+      "source": "default",
+      "node_id": "tli",
+      "type": "mission"
+    }
+  },
+  {
+    "text": "环月注入 LOI (Lunar Orbit Insertion): 航天器经月心双曲接近段抵达近月点时反向制动, 把双曲轨道捕获为环月轨道。捕获 Δv = v_p − v_circ, v_p²=v_∞²+2μ_moon/r_p (vis-viva)。",
+    "metadata": {
+      "source": "default",
+      "node_id": "loi",
+      "type": "mission"
+    }
+  },
+  {
+    "text": "发射窗口: 满足相位角/光照/测控等约束的可发射时段。地月转移要求发射时月球处于使航天器到达 SOI 时与月球相遇的相位, 由相位角与轨道根数决定; 约束整个地月转移任务。",
+    "metadata": {
+      "source": "default",
+      "node_id": "launch_window",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "相位角: 发射时刻目标天体相对出发点的角位置。Hohmann 转移相位角由两轨道半径比决定; 决定转移时机, 是发射窗口的核心约束, 依赖轨道根数。",
+    "metadata": {
+      "source": "default",
+      "node_id": "phase_angle",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "地月转移: 从地球到月球的轨道设计。核心方法为拼凑圆锥近似 + Hohmann (或 Lambert 精确解); 流程: LEO 停泊 → TLI 注入 → 地心双曲段 → SOI 边界 → 月心双曲段 → LOI 捕获。需发射窗口(相位角)匹配, Δv 预算由 vis-viva 估算。",
+    "metadata": {
+      "source": "default",
+      "node_id": "earth_moon_transfer",
+      "type": "mission"
+    }
+  },
+  {
+    "text": "二体问题: 两质点在万有引力下的运动, 解析解为圆锥曲线 (圆/椭圆/抛物/双曲)。基于角动量守恒 (h=r×v) 与能量守恒 (ε=v²/2−μ/r), 是开普勒方程、vis-viva、Hohmann、Lambert、拼凑圆锥的共同基础。",
+    "metadata": {
+      "source": "default",
+      "node_id": "two_body",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "经典轨道根数: 半长轴 a、偏心率 e、倾角 i、升交点赤经 Ω、近地点幅角 ω、真近点角 ν, 共六要素完整描述二体轨道。相位角与发射窗口计算均依赖轨道根数。",
+    "metadata": {
+      "source": "default",
+      "node_id": "orbital_elements",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "能量守恒 (二体): 比机械能 ε = v²/2 − μ/r = −μ/(2a) 守恒。由此直接导出 vis-viva 方程, 是所有 Δv 估算的物理根基。",
+    "metadata": {
+      "source": "default",
+      "node_id": "energy_conservation",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "角动量守恒 (中心力场): 比角动量 h = r × v 守恒, 故轨道位于固定平面内, 且面积速度守恒 (开普勒第二定律)。是二体问题平面性与时变规律的根基。",
+    "metadata": {
+      "source": "default",
+      "node_id": "angular_momentum",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "速度增量 Δv 预算: 任务总冲量需求。地月转移 Δv ≈ TLI Δv + LOI Δv, 各段由 vis-viva 估算; Δv 是地月转移任务的核心约束之一。",
+    "metadata": {
+      "source": "default",
+      "node_id": "delta_v",
+      "type": "concept"
+    }
+  },
+  {
+    "text": "Orekit: CNES 开源的航天动力学基础库 (Java 核心, Python 封装)。支持二体/数值传播、历书、坐标变换; 本项目 orekit_tool/astropy_tool 封装之, 适合工程级轨道计算。",
+    "metadata": {
+      "source": "default",
+      "node_id": "orekit",
+      "type": "tool"
+    }
+  },
+  {
+    "text": "GMAT (General Mission Analysis Tool): NASA Goddard 开源任务分析工具。支持拼凑圆锥、Lambert 优化、数值积分、脚本; gmat_tool 封装之, 适合复杂任务设计。",
+    "metadata": {
+      "source": "default",
+      "node_id": "gmat",
+      "type": "tool"
+    }
+  },
+  {
+    "text": "SPICE (NAIF): NASA 行星历书/姿态/事件工具包, spiceypy 为 Python 封装。提供月球/行星精确星历 (星历内核), 用于发射窗口与相位角的精确计算; spiceypy_tool 封装之。",
+    "metadata": {
+      "source": "default",
+      "node_id": "spiceypy",
+      "type": "tool"
+    }
+  },
+  {
+    "text": "Basilisk: University of Colorado 开发的多体/航天器 GNC 仿真框架。支持六自由度动力学、多体引力、传感器/执行器闭环仿真; basilisk_tool 封装之, 适合 GNC 验证。",
+    "metadata": {
+      "source": "default",
+      "node_id": "basilisk",
+      "type": "tool"
+    }
+  },
+  {
+    "text": "STK (Systems Tool Kit): AGI 商业航天任务分析软件, 行业标准。支持全任务链分析、覆盖、链路、可视化; stk_tool 封装之, 适合工程总体设计与汇报。",
+    "metadata": {
+      "source": "default",
+      "node_id": "stk",
+      "type": "tool"
+    }
+  }
+]
