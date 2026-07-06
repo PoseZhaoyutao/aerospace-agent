@@ -110,9 +110,100 @@ class AerospaceRAG:
             lines.append(chain)
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------ 文献搜索
+    def search_literature(
+        self,
+        query: str,
+        research_topic: str = "",
+        max_results: int = 10,
+        download_strong: bool = True,
+    ) -> dict:
+        """搜索最新文献、评估相关性、下载强相关论文并总结全文。
+
+        流程：CSTCloud 登录 → arXiv 搜索 → 摘要相关性评分 →
+        strong 相关：下载 PDF + 全文总结 + 索引入 RAG + 更新知识图谱 →
+        weak 相关：跳过 → 生成知识云图。
+
+        Args:
+            query: arXiv 搜索关键词（如 "lunar transfer orbit"）
+            research_topic: 研究主题（用于相关性评分，默认等同 query）
+            max_results: 最大搜索结果数
+            download_strong: 是否下载强相关论文的 PDF
+
+        Returns:
+            管线报告字典，含 total_found / strong_count / weak_count /
+            downloaded / papers / knowledge_cloud_path 等字段。
+        """
+        from .literature_pipeline import LiteraturePipeline
+
+        topic = research_topic or query
+        pipeline = LiteraturePipeline(rag=self)
+        report = pipeline.run(
+            research_topic=query,
+            max_papers=max_results,
+            min_relevance="strong" if download_strong else "weak",
+        )
+        return {
+            "research_topic": report.research_topic,
+            "total_found": report.total_found,
+            "strong_count": report.strong_count,
+            "weak_count": report.weak_count,
+            "downloaded_count": report.downloaded_count,
+            "papers": [
+                {
+                    "title": pr.paper.title,
+                    "arxiv_id": pr.paper.id,
+                    "authors": pr.paper.authors[:3],
+                    "relevance": pr.score.relevance if pr.score else "unknown",
+                    "score": pr.score.score if pr.score else 0.0,
+                    "status": pr.status,
+                    "summary": (pr.summary[:200] + " ...") if pr.summary and len(pr.summary) > 200 else pr.summary,
+                    "pdf_path": pr.pdf_path,
+                    "concepts": pr.concepts,
+                }
+                for pr in report.papers
+            ],
+            "knowledge_graph_snapshot": report.knowledge_graph_snapshot,
+        }
+
+    # ------------------------------------------------------------------ 知识云图
+    def generate_knowledge_cloud(
+        self, output_path: str = "/workspace/reports/knowledge_cloud.html"
+    ) -> str:
+        """生成动态知识云图 HTML（力导向交互式可视化）。"""
+        from .knowledge_cloud import KnowledgeCloudGenerator
+
+        gen = KnowledgeCloudGenerator()
+        return gen.generate(self.kb.knowledge_graph, output_path=output_path)
+
+    # ------------------------------------------------------------------ 知识报告
+    def generate_knowledge_report(
+        self,
+        pipeline_report=None,
+        output_path: str = "/workspace/reports/knowledge_learning_report.html",
+    ) -> str:
+        """生成知识学习报告（含概念网络分析、文献记录、论文写作辅助）。"""
+        from ..reporting.knowledge_report import KnowledgeReportGenerator
+
+        gen = KnowledgeReportGenerator()
+        return gen.generate(
+            self.kb.knowledge_graph,
+            pipeline_report=pipeline_report,
+            output_path=output_path,
+        )
+
     # ------------------------------------------------------------------ 状态
     def status(self) -> dict:
-        return self.kb.status()
+        s = self.kb.status()
+        # 补充文献相关状态
+        papers_dir = "/workspace/data/papers"
+        if os.path.isdir(papers_dir):
+            s["downloaded_papers"] = len(
+                [f for f in os.listdir(papers_dir) if f.endswith(".pdf")]
+            )
+        else:
+            s["downloaded_papers"] = 0
+        return s
 
     # ------------------------------------------------------------------ 持久化
     def save(self) -> None:

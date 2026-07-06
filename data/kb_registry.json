@@ -174,5 +174,80 @@
       "node_id": "stk",
       "type": "tool"
     }
+  },
+  {
+    "text": "【论文总结】\n标题: Low-Thrust Many-Revolution Transfer between Near Rectilinear Halo Orbit and Low Lunar Orbit Using Hybrid Differential Dynamic Programming\narXiv ID: 2504.07723v1\n作者: Kohei Oue, Naoya Ozaki, Toshihiro Chujo\n\n研究背景: Low-thrust, many-revolution transfers between near-rectilinear halo orbits and low lunar orbits are challenging due to the many-revolutions and is further complicated by three-body perturbation. To ad\n\n方法: LOW-THRUST MANY-REVOLUTION TRANSFER BETWEEN NEAR RECTILINEAR HALO ORBIT AND LOW LUNAR ORBIT USING HYBRID DIFFERENTIAL DYNAMIC PROGRAMMING\n\n关键公式/算法: (基于全文分析, 详见原文)\n\n主要结论: dress these challenges, we extend hybrid differential dynamic programming by enhancing with a continuation of dynamical system. The optimization begins with the Sundman-transformed two-body problem an\n\n与「lunar transfer orbit」的关联: 该论文涉及航天轨道力学相关主题, 可能为研究提供方法参考或对比基准。\n",
+    "metadata": {
+      "source": "arxiv",
+      "paper_id": "2504.07723v1",
+      "title": "Low-Thrust Many-Revolution Transfer between Near Rectilinear Halo Orbit and Low Lunar Orbit Using Hybrid Differential Dynamic Programming",
+      "authors": "Kohei Oue, Naoya Ozaki, Toshihiro Chujo",
+      "arxiv_id": "2504.07723v1",
+      "type": "paper",
+      "relevance": "strong",
+      "relevance_score": 0.667,
+      "primary_category": "astro-ph.EP",
+      "published_date": "2025-04-10T13:16:13Z"
+    }
+  },
+  {
+    "text": "【论文总结】\n标题: Optimization, guidance, and control of low-thrust transfers from the Lunar Gateway to low lunar orbit\narXiv ID: 2405.20449v1\n作者: Chiara Pozzi, Mauro Pontani, Alessandro Beolchi, Elena Fantino\n\n研究背景: The Gateway will represent a primary space system useful for the Artemis program, Earth-Moon transportation, and deep space exploration. It is expected to serve as a staging location on the way to the\n\n方法: Published Open Access at: https://doi.org/10.1016/j.actaastro.2024.05.036 Optimization, Guidance, and Control of Low-Thrust Transfers from the Lunar Gateway to Low Lunar Orbit\n\n关键公式/算法: (基于全文分析, 详见原文)\n\n主要结论:  lunar surface. This study focuses on low-thrust transfer dynamics, from the Near-Rectilinear Halo Orbit traveled by Gateway to a specified Low-altitude Lunar Orbit (LLO). This research addresses: (i)\n\n与「lunar transfer orbit」的关联: 该论文涉及航天轨道力学相关主题, 可能为研究提供方法参考或对比基准。\n",
+    "metadata": {
+      "source": "arxiv",
+      "paper_id": "2405.20449v1",
+      "title": "Optimization, guidance, and control of low-thrust transfers from the Lunar Gateway to low lunar orbit",
+      "authors": "Chiara Pozzi, Mauro Pontani, Alessandro Beolchi, Elena Fantino",
+      "arxiv_id": "2405.20449v1",
+      "type": "paper",
+      "relevance": "strong",
+      "relevance_score": 1.0,
+      "primary_category": "eess.SY",
+      "published_date": "2024-05-30T19:48:37Z"
+    }
+  },
+  {
+    "text": "【论文总结】\n标题: Trajectory Design From GTO To Lunar Equatorial Orbit For The Dark Ages Radio Explorer (DARE) Spacecraft\narXiv ID: 1504.00410v2\n作者: Anthony L. Genova, Fan Yang Yang, Andres Dono Perez, Ken F. Galal, Nicolas T. Faber\n\n研究背景: The trajectory design for the Dark Ages Radio Explorer (DARE) mission con-cept involves launching the DARE spacecraft into a geosynchronous transfer orbit (GTO) as a secondary payload. From GTO, the s\n\n方法:                    \n\n关键公式/算法: (基于全文分析, 详见原文)\n\n主要结论: pacecraft then transfers to a lunar orbit that is stable (i.e., no station-keeping maneuvers are required with minimum perilune altitude always above 40 km) and allows for more than 1,000 cumulative h\n\n与「lunar transfer orbit」的关联: 该论文涉及航天轨道力学相关主题, 可能为研究提供方法参考或对比基准。\n",
+    "metadata": {
+      "source": "arxiv",
+      "paper_id": "1504.00410v2",
+      "title": "Trajectory Design From GTO To Lunar Equatorial Orbit For The Dark Ages Radio Explorer (DARE) Spacecraft",
+      "authors": "Anthony L. Genova, Fan Yang Yang, Andres Dono Perez, Ken F. Galal, Nicolas T. Faber",
+      "arxiv_id": "1504.00410v2",
+      "type": "paper",
+      "relevance": "strong",
+      "relevance_score": 1.0,
+      "primary_category": "astro-ph.IM",
+      "published_date": "2015-04-01T22:53:37Z"
+    }
+  },
+  {
+    "text": "【论文总结】\n标题: On the Construction of Low-Energy Cislunar and Trans-lunar Transfers Based on the Libration Points\narXiv ID: 1402.2736v1\n作者: Ming Xu, Yan Wei, Shijie Xu\n\n研究背景: There exist cislunar and trans-lunar libration points near the Moon, which are referred as the LL1 and LL2 points respectively and can generate the different types of low-energy trajectories transferr\n\n方法: Based on the Libration Points Ming Xu     Yan Wei     Shijie Xu Accepted for publication in Astrophysics and Space Science.\n\n关键公式/算法: (基于全文分析, 详见原文)\n\n主要结论: ing from Earth to Moon. The time-dependent analytic model including the gravitational forces from the Sun, Earth and Moon is employed to investigate the energy-minimal and practical transfer trajector\n\n与「lunar transfer orbit」的关联: 该论文涉及航天轨道力学相关主题, 可能为研究提供方法参考或对比基准。\n",
+    "metadata": {
+      "source": "arxiv",
+      "paper_id": "1402.2736v1",
+      "title": "On the Construction of Low-Energy Cislunar and Trans-lunar Transfers Based on the Libration Points",
+      "authors": "Ming Xu, Yan Wei, Shijie Xu",
+      "arxiv_id": "1402.2736v1",
+      "type": "paper",
+      "relevance": "strong",
+      "relevance_score": 1.0,
+      "primary_category": "astro-ph.EP",
+      "published_date": "2014-02-12T05:02:26Z"
+    }
+  },
+  {
+    "text": "【论文总结】\n标题: A Case Study Analysis for Designing a Lunar Navigation Satellite System with Time-Transfer from Earth-GPS\narXiv ID: 2201.00761v1\n作者: Sriramya Bhamidipati, Tara Mina, Grace Gao\n\n研究背景: Recently, there has been a growing interest in the use of a SmallSat platform for the future Lunar Navigation Satellite System (LNSS) to allow for cost-effectiveness and rapid deployment. However, man\n\n方法: system with timeMtransfer from earthMgps sriramya bhamidipatiL tara mina and grace gaoL stanford university BIOGRAPHY\n\n关键公式/算法: (基于全文分析, 详见原文)\n\n主要结论: y design choices are yet to be finalized for the SmallSat-based LNSS, including the onboard clock and the orbit type. As compared to the legacy Earth-GPS, designing an LNSS poses unique challenges: (a\n\n与「lunar transfer orbit」的关联: 该论文涉及航天轨道力学相关主题, 可能为研究提供方法参考或对比基准。\n",
+    "metadata": {
+      "source": "arxiv",
+      "paper_id": "2201.00761v1",
+      "title": "A Case Study Analysis for Designing a Lunar Navigation Satellite System with Time-Transfer from Earth-GPS",
+      "authors": "Sriramya Bhamidipati, Tara Mina, Grace Gao",
+      "arxiv_id": "2201.00761v1",
+      "type": "paper",
+      "relevance": "strong",
+      "relevance_score": 0.667,
+      "primary_category": "cs.RO",
+      "published_date": "2022-01-03T17:08:02Z"
+    }
   }
 ]

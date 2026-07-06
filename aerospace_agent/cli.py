@@ -220,6 +220,103 @@ def rag_index(dir):
     cprint(f"已索引 {count} 个段落（来自 {dir}）", style="bold green")
 
 
+@rag.command("literature")
+@click.argument("query")
+@click.option("--topic", "-t", default="", help="研究主题（相关性评分用，默认等同 query）")
+@click.option("--max", "max_results", default=10, show_default=True, help="最大搜索数")
+@click.option("--no-download", is_flag=True, default=False, help="仅评分不下载 PDF")
+@click.option("--report", is_flag=True, default=False, help="同时生成知识学习报告")
+def rag_literature(query, topic, max_results, no_download, report):
+    """搜索最新文献、评估相关性、下载强相关论文并总结。
+
+    流程：CSTCloud 登录 → arXiv 搜索 → 摘要评分 →
+    strong 相关：下载 PDF + 全文总结 + 索引入 RAG + 更新知识图谱 →
+    weak 相关：跳过 → 生成动态知识云图。
+
+    示例：
+      aerospace-agent rag literature "lunar transfer orbit"
+      aerospace-agent rag literature "spacecraft trajectory optimization" --topic "地月转移轨道" --report
+    """
+    from .rag.aerospace_rag import AerospaceRAG
+
+    rag_obj = AerospaceRAG()
+    cprint("=== 文献搜索与处理管线 ===", style="bold magenta")
+    cprint(f"搜索查询: {query}", style="cyan")
+    cprint(f"研究主题: {topic or query}", style="cyan")
+    cprint(f"最大结果数: {max_results}", style="cyan")
+    cprint(f"下载强相关: {'否' if no_download else '是'}", style="cyan")
+    cprint("", style="")
+
+    result = rag_obj.search_literature(
+        query=query,
+        research_topic=topic,
+        max_results=max_results,
+        download_strong=not no_download,
+    )
+
+    cprint("\n=== 管线结果 ===", style="bold green")
+    cprint(f"搜索到: {result['total_found']} 篇", style="cyan")
+    cprint(f"强相关: {result['strong_count']} 篇", style="green")
+    cprint(f"弱相关: {result['weak_count']} 篇（已跳过）", style="yellow")
+    cprint(f"已下载: {result['downloaded_count']} 篇", style="green")
+
+    cprint("\n--- 论文明细 ---", style="bold cyan")
+    for i, p in enumerate(result.get("papers", []), 1):
+        rel_style = "green" if p["relevance"] == "strong" else "yellow"
+        status_icon = {"downloaded": "[已下载]", "skipped": "[跳过]", "failed": "[失败]"}.get(p["status"], "[?]")
+        cprint(f"\n{i}. {p['title']}", style="bold white")
+        cprint(f"   arXiv: {p['arxiv_id']}  作者: {', '.join(p['authors'])}", style="dim")
+        cprint(f"   相关性: {p['relevance']} (score={p['score']:.2f})  {status_icon}", style=rel_style)
+        if p["summary"]:
+            cprint(f"   总结: {p['summary']}", style="dim")
+        if p["pdf_path"]:
+            cprint(f"   PDF: {p['pdf_path']}", style="dim")
+        if p["concepts"]:
+            cprint(f"   概念: {', '.join(p['concepts'])}", style="dim")
+
+    # 生成知识云图
+    cprint("\n=== 生成动态知识云图 ===", style="bold magenta")
+    cloud_path = rag_obj.generate_knowledge_cloud()
+    cprint(f"知识云图: {cloud_path}", style="green")
+
+    # 可选：生成知识学习报告
+    if report:
+        cprint("\n=== 生成知识学习报告 ===", style="bold magenta")
+        report_path = rag_obj.generate_knowledge_report()
+        cprint(f"学习报告: {report_path}", style="green")
+
+    # 知识图谱快照
+    snap = result.get("knowledge_graph_snapshot", {})
+    if snap:
+        cprint(f"\n知识图谱: {snap.get('num_nodes', snap.get('nodes', '?'))} 节点, "
+               f"{snap.get('num_edges', snap.get('edges', '?'))} 边", style="cyan")
+
+
+@rag.command("cloud")
+@click.option("--output", "-o", default="/workspace/reports/knowledge_cloud.html", show_default=True, help="输出路径")
+def rag_cloud(output):
+    """生成动态知识云图（力导向交互式 HTML）。"""
+    from .rag.aerospace_rag import AerospaceRAG
+
+    rag_obj = AerospaceRAG()
+    path = rag_obj.generate_knowledge_cloud(output_path=output)
+    s = rag_obj.status()
+    cprint(f"知识云图已生成: {path}", style="bold green")
+    cprint(f"节点数: {s.get('kg_nodes', '?')}  边数: {s.get('kg_edges', '?')}  "
+           f"已下载文献: {s.get('downloaded_papers', 0)}", style="cyan")
+
+
+@rag.command("report")
+@click.option("--output", "-o", default="/workspace/reports/knowledge_learning_report.html", show_default=True, help="输出路径")
+def rag_report(output):
+    """生成知识学习报告（概念网络分析 + 论文写作辅助）。"""
+    from .rag.aerospace_rag import AerospaceRAG
+
+    rag_obj = AerospaceRAG()
+    path = rag_obj.generate_knowledge_report(output_path=output)
+    cprint(f"知识学习报告已生成: {path}", style="bold green")
+
+
 # ----------------------------------------------------------------------
 # demo
 # ----------------------------------------------------------------------

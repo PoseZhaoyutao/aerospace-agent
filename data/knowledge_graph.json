@@ -281,6 +281,179 @@
           "月球转移"
         ]
       }
+    },
+    "paper:2504.07723v1": {
+      "type": "paper",
+      "content": "论文: Low-Thrust Many-Revolution Transfer between Near Rectilinear Halo Orbit and Low Lunar Orbit Using Hybrid Differential Dynamic Programming\n作者: Kohei Oue, Naoya Ozaki, Toshihiro Chujo\narXiv: 2504.07723v1\n摘要: Low-thrust, many-revolution transfers between near-rectilinear halo orbits and low lunar orbits are challenging due to the many-revolutions and is further complicated by three-body perturbation. To ad",
+      "metadata": {
+        "arxiv_id": "2504.07723v1",
+        "title": "Low-Thrust Many-Revolution Transfer between Near Rectilinear Halo Orbit and Low Lunar Orbit Using Hybrid Differential Dynamic Programming",
+        "authors": [
+          "Kohei Oue",
+          "Naoya Ozaki",
+          "Toshihiro Chujo"
+        ],
+        "source": "arxiv",
+        "primary_category": "astro-ph.EP",
+        "published_date": "2025-04-10T13:16:13Z",
+        "aliases": [
+          "2504.07723v1",
+          "2504.07723"
+        ]
+      }
+    },
+    "concept:lunar": {
+      "type": "concept",
+      "content": "概念: lunar (来自论文 2504.07723v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "2504.07723v1",
+        "aliases": [
+          "lunar"
+        ]
+      }
+    },
+    "concept:orbit": {
+      "type": "concept",
+      "content": "概念: orbit (来自论文 2504.07723v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "2504.07723v1",
+        "aliases": [
+          "orbit"
+        ]
+      }
+    },
+    "concept:thrust": {
+      "type": "concept",
+      "content": "概念: thrust (来自论文 2504.07723v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "2504.07723v1",
+        "aliases": [
+          "thrust"
+        ]
+      }
+    },
+    "paper:2405.20449v1": {
+      "type": "paper",
+      "content": "论文: Optimization, guidance, and control of low-thrust transfers from the Lunar Gateway to low lunar orbit\n作者: Chiara Pozzi, Mauro Pontani, Alessandro Beolchi, Elena Fantino\narXiv: 2405.20449v1\n摘要: The Gateway will represent a primary space system useful for the Artemis program, Earth-Moon transportation, and deep space exploration. It is expected to serve as a staging location on the way to the",
+      "metadata": {
+        "arxiv_id": "2405.20449v1",
+        "title": "Optimization, guidance, and control of low-thrust transfers from the Lunar Gateway to low lunar orbit",
+        "authors": [
+          "Chiara Pozzi",
+          "Mauro Pontani",
+          "Alessandro Beolchi",
+          "Elena Fantino"
+        ],
+        "source": "arxiv",
+        "primary_category": "eess.SY",
+        "published_date": "2024-05-30T19:48:37Z",
+        "aliases": [
+          "2405.20449v1",
+          "2405.20449"
+        ]
+      }
+    },
+    "concept:propulsion": {
+      "type": "concept",
+      "content": "概念: propulsion (来自论文 2405.20449v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "2405.20449v1",
+        "aliases": [
+          "propulsion"
+        ]
+      }
+    },
+    "paper:1504.00410v2": {
+      "type": "paper",
+      "content": "论文: Trajectory Design From GTO To Lunar Equatorial Orbit For The Dark Ages Radio Explorer (DARE) Spacecraft\n作者: Anthony L. Genova, Fan Yang Yang, Andres Dono Perez, Ken F. Galal, Nicolas T. Faber\narXiv: 1504.00410v2\n摘要: The trajectory design for the Dark Ages Radio Explorer (DARE) mission con-cept involves launching the DARE spacecraft into a geosynchronous transfer orbit (GTO) as a secondary payload. From GTO, the s",
+      "metadata": {
+        "arxiv_id": "1504.00410v2",
+        "title": "Trajectory Design From GTO To Lunar Equatorial Orbit For The Dark Ages Radio Explorer (DARE) Spacecraft",
+        "authors": [
+          "Anthony L. Genova",
+          "Fan Yang Yang",
+          "Andres Dono Perez",
+          "Ken F. Galal",
+          "Nicolas T. Faber",
+          "Scott Mitchell",
+          "Brett Landin",
+          "Abhirup Datta",
+          "Jack O. Burns"
+        ],
+        "source": "arxiv",
+        "primary_category": "astro-ph.IM",
+        "published_date": "2015-04-01T22:53:37Z",
+        "aliases": [
+          "1504.00410v2",
+          "1504.00410"
+        ]
+      }
+    },
+    "paper:1402.2736v1": {
+      "type": "paper",
+      "content": "论文: On the Construction of Low-Energy Cislunar and Trans-lunar Transfers Based on the Libration Points\n作者: Ming Xu, Yan Wei, Shijie Xu\narXiv: 1402.2736v1\n摘要: There exist cislunar and trans-lunar libration points near the Moon, which are referred as the LL1 and LL2 points respectively and can generate the different types of low-energy trajectories transferr",
+      "metadata": {
+        "arxiv_id": "1402.2736v1",
+        "title": "On the Construction of Low-Energy Cislunar and Trans-lunar Transfers Based on the Libration Points",
+        "authors": [
+          "Ming Xu",
+          "Yan Wei",
+          "Shijie Xu"
+        ],
+        "source": "arxiv",
+        "primary_category": "astro-ph.EP",
+        "published_date": "2014-02-12T05:02:26Z",
+        "aliases": [
+          "1402.2736v1",
+          "1402.2736"
+        ]
+      }
+    },
+    "concept:apsis": {
+      "type": "concept",
+      "content": "概念: apsis (来自论文 1402.2736v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "1402.2736v1",
+        "aliases": [
+          "apsis"
+        ]
+      }
+    },
+    "paper:2201.00761v1": {
+      "type": "paper",
+      "content": "论文: A Case Study Analysis for Designing a Lunar Navigation Satellite System with Time-Transfer from Earth-GPS\n作者: Sriramya Bhamidipati, Tara Mina, Grace Gao\narXiv: 2201.00761v1\n摘要: Recently, there has been a growing interest in the use of a SmallSat platform for the future Lunar Navigation Satellite System (LNSS) to allow for cost-effectiveness and rapid deployment. However, man",
+      "metadata": {
+        "arxiv_id": "2201.00761v1",
+        "title": "A Case Study Analysis for Designing a Lunar Navigation Satellite System with Time-Transfer from Earth-GPS",
+        "authors": [
+          "Sriramya Bhamidipati",
+          "Tara Mina",
+          "Grace Gao"
+        ],
+        "source": "arxiv",
+        "primary_category": "cs.RO",
+        "published_date": "2022-01-03T17:08:02Z",
+        "aliases": [
+          "2201.00761v1",
+          "2201.00761"
+        ]
+      }
+    },
+    "concept:navigation": {
+      "type": "concept",
+      "content": "概念: navigation (来自论文 2201.00761v1)",
+      "metadata": {
+        "source": "arxiv",
+        "from_paper": "2201.00761v1",
+        "aliases": [
+          "navigation"
+        ]
+      }
     }
   },
   "edges": [
@@ -453,9 +626,141 @@
       "weight": 1.0
     },
     {
+      "src": "mean_anomaly",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "mean_anomaly",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
       "src": "eccentric_anomaly",
       "dst": "two_body",
       "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2201.00761v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "eccentric_anomaly",
+      "dst": "paper:2201.00761v1",
+      "relation": "used_by",
       "weight": 1.0
     },
     {
@@ -624,6 +929,96 @@
       "src": "earth_moon_transfer",
       "dst": "phase_angle",
       "relation": "depends_on",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:lunar",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:lunar",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:lunar",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:lunar",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:lunar",
+      "dst": "paper:2201.00761v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:1504.00410v2",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:orbit",
+      "dst": "paper:2201.00761v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:thrust",
+      "dst": "paper:2504.07723v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:propulsion",
+      "dst": "paper:2405.20449v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:apsis",
+      "dst": "paper:1402.2736v1",
+      "relation": "used_by",
+      "weight": 1.0
+    },
+    {
+      "src": "concept:navigation",
+      "dst": "paper:2201.00761v1",
+      "relation": "used_by",
       "weight": 1.0
     }
   ]

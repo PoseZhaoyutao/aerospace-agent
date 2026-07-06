@@ -525,6 +525,43 @@ def create_default_agent(max_steps: int = 10,
     # 7. lazy 加载 MCP 工具
     for bt in _load_mcp_tools():
         agent.register_mcp_tool(bt)
-    # 8. 挂载简易 RAG
-    agent.rag = SimpleRAG(memory)
+    # 8. 挂载增强 RAG（向量库 + 关键词 + 知识图谱 + 文献管线 + 知识云图）
+    try:
+        from ..rag.aerospace_rag import AerospaceRAG
+        agent.rag = AerospaceRAG()
+    except Exception:
+        # 回退到简易 RAG
+        agent.rag = SimpleRAG(memory)
+    # 9. 注册文献搜索工具（让 Agent 在 ReAct 循环中可调用）
+    try:
+        def _literature_search(query: str, topic: str = "", max_results: int = 5) -> str:
+            """搜索最新航天文献，评估相关性，下载强相关论文并总结。"""
+            rag_obj = getattr(agent, "rag", None)
+            if rag_obj is None or not hasattr(rag_obj, "search_literature"):
+                return "RAG 文献管线不可用"
+            result = rag_obj.search_literature(
+                query=query, research_topic=topic or query,
+                max_results=max_results, download_strong=True,
+            )
+            lines = [
+                f"搜索到 {result['total_found']} 篇，"
+                f"强相关 {result['strong_count']} 篇（已下载 {result['downloaded_count']} 篇），"
+                f"弱相关 {result['weak_count']} 篇（已跳过）。",
+            ]
+            for p in result.get("papers", []):
+                if p["relevance"] == "strong":
+                    lines.append(f"  [{p['status']}] {p['title']}")
+                    if p["summary"]:
+                        lines.append(f"    总结: {p['summary']}")
+            snap = result.get("knowledge_graph_snapshot", {})
+            if snap:
+                lines.append(f"知识图谱: {snap.get('nodes','?')} 节点, {snap.get('edges','?')} 边")
+            return "\n".join(lines)
+        agent.register_tool(Tool(
+            "literature_search",
+            "搜索最新航天文献(query, topic, max_results)：评估相关性、下载强相关 PDF、总结全文、更新知识图谱",
+            _literature_search,
+        ))
+    except Exception:
+        pass
     return agent
