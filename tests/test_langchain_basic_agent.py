@@ -9,6 +9,8 @@ from aerospace_agent.langchain_agent.basic_agent import (
 )
 from aerospace_agent.cli_tui import CEOEngine, Stats
 from aerospace_agent.core.agent import AerospaceAgent
+from aerospace_agent.skills.base import SkillBase
+from aerospace_agent.skills.registry import SkillRegistry
 
 
 class ExplodingLLM:
@@ -65,6 +67,19 @@ class FakeMCPTool:
             "source": self.source,
             "result": {"echo": kwargs},
             "error": None,
+        }
+
+
+class EchoSkill(SkillBase):
+    name = "echo_skill"
+    description = "Echoes input text."
+    category = "test"
+
+    def execute(self, agent, **kwargs):
+        return {
+            "success": True,
+            "result": {"agent_seen": agent is not None, "echo": kwargs.get("text")},
+            "message": "ok",
         }
 
 
@@ -190,6 +205,10 @@ def test_build_basic_tools_exposes_minimal_safe_tools():
         "list_basic_tools",
         "list_mcp_tools",
         "call_mcp_tool",
+        "list_skills",
+        "use_skill",
+        "discover_skill_manifests",
+        "install_skill_from_path",
     ]
 
 
@@ -207,6 +226,95 @@ def test_basic_tools_can_call_registered_mcp_tool():
     assert result["status"] == "ok"
     assert result["result"]["success"] is True
     assert result["result"]["result"]["echo"] == {"value": 3}
+
+
+def test_basic_tools_list_and_use_registered_python_skill():
+    workspace = _workspace("skill_python")
+    registry = SkillRegistry()
+    registry.register(EchoSkill())
+    agent_context = object()
+    tools = build_basic_tools(
+        workspace,
+        skill_registry=registry,
+        skill_agent=agent_context,
+    )
+    list_tool = next(tool for tool in tools if tool.name == "list_skills")
+    use_tool = next(tool for tool in tools if tool.name == "use_skill")
+
+    listed = list_tool.invoke()
+    result = use_tool.invoke({
+        "name": "echo_skill",
+        "arguments": {"text": "hello"},
+    })
+
+    assert listed["status"] == "ok"
+    assert listed["skills"][0]["name"] == "echo_skill"
+    assert result["status"] == "ok"
+    assert result["result"]["success"] is True
+    assert result["result"]["result"] == {"agent_seen": True, "echo": "hello"}
+
+
+def test_basic_tools_discover_skill_manifests():
+    workspace = _workspace("skill_discover")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "orbit-audit"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: orbit-audit
+description: Audits orbit assumptions.
+category: analysis
+---
+
+# Orbit Audit
+""",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry()
+    tools = build_basic_tools(workspace, skill_registry=registry)
+    discover_tool = next(tool for tool in tools if tool.name == "discover_skill_manifests")
+
+    result = discover_tool.invoke({"roots": [str(skill_root)]})
+
+    assert result["status"] == "ok"
+    assert result["count"] == 1
+    assert result["manifests"][0]["name"] == "orbit-audit"
+    assert result["manifests"][0]["executable"] is False
+
+
+def test_basic_tools_install_skill_from_path():
+    workspace = _workspace("skill_install")
+    source_dir = workspace / "source" / "sensor-check"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "SKILL.md").write_text(
+        """---
+name: sensor-check
+description: Checks sensor simulation assumptions.
+category: analysis
+---
+
+# Sensor Check
+""",
+        encoding="utf-8",
+    )
+    install_root = workspace / "installed"
+    registry = SkillRegistry()
+    tools = build_basic_tools(
+        workspace,
+        skill_registry=registry,
+        skill_install_dir=install_root,
+    )
+    install_tool = next(tool for tool in tools if tool.name == "install_skill_from_path")
+    use_tool = next(tool for tool in tools if tool.name == "use_skill")
+
+    result = install_tool.invoke({"path": str(source_dir), "overwrite": True})
+    use_result = use_tool.invoke({"name": "sensor-check"})
+
+    assert result["status"] == "ok"
+    assert result["manifest"]["name"] == "sensor-check"
+    assert Path(result["installed_path"], "SKILL.md").exists()
+    assert use_result["status"] == "error"
+    assert use_result["result"]["error_code"] == "SKILL_NOT_EXECUTABLE"
 
 
 def test_cli_engine_uses_langchain_even_if_legacy_mode_is_requested():

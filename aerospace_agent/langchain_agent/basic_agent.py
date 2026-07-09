@@ -17,6 +17,7 @@ from pathlib import Path
 import html
 import json
 import re
+import shutil
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -40,6 +41,7 @@ class BasicAgentConfig:
     memory_max_chars: int = 12000
     rag_top_k: int = 3
     enable_rag_context: bool = True
+    skill_install_dir: str = ".aerospace_skills"
 
 
 @dataclass
@@ -153,6 +155,22 @@ def _tool_catalog() -> List[Dict[str, str]]:
             "name": "call_mcp_tool",
             "description": "Call a method on a base MCP tool by name.",
         },
+        {
+            "name": "list_skills",
+            "description": "List registered Python skills and discovered SKILL.md manifests.",
+        },
+        {
+            "name": "use_skill",
+            "description": "Execute a registered Python skill by name.",
+        },
+        {
+            "name": "discover_skill_manifests",
+            "description": "Discover declarative SKILL.md manifests from local roots.",
+        },
+        {
+            "name": "install_skill_from_path",
+            "description": "Install a local directory containing SKILL.md into the workspace skill root.",
+        },
     ]
 
 
@@ -178,11 +196,55 @@ def _resolve_mcp_tools(mcp_tools: Optional[Any] = None) -> Dict[str, Any]:
     return resolved
 
 
+def _resolve_skill_registry(
+    skill_registry: Optional[Any] = None,
+    skill_roots: Optional[List[Path]] = None,
+) -> Any:
+    if skill_registry is not None:
+        return skill_registry
+    from aerospace_agent.skills.registry import SkillRegistry
+    registry = SkillRegistry(skill_roots=skill_roots or [])
+    try:
+        registry.auto_discover()
+    except Exception:
+        pass
+    if skill_roots:
+        try:
+            registry.discover_manifests(skill_roots)
+        except Exception:
+            pass
+    return registry
+
+
+def _safe_skill_dir_name(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(name).strip()).strip(".-")
+    return safe or "skill"
+
+
+def _as_path_list(values: Optional[Any]) -> List[Path]:
+    if values is None:
+        return []
+    if isinstance(values, (str, Path)):
+        return [Path(values)]
+    return [Path(value) for value in values]
+
+
 def build_basic_tools(
     workspace: Optional[Path] = None,
     mcp_tools: Optional[Any] = None,
+    skill_registry: Optional[Any] = None,
+    skill_agent: Optional[Any] = None,
+    skill_roots: Optional[Any] = None,
+    skill_install_dir: Optional[Path] = None,
 ) -> List[BasicTool]:
     workspace = (workspace or Path.cwd()).resolve()
+    skill_root_paths = _as_path_list(skill_roots)
+    install_root = (
+        Path(skill_install_dir)
+        if skill_install_dir is not None
+        else workspace / ".aerospace_skills"
+    ).resolve()
+    registry = _resolve_skill_registry(skill_registry, skill_root_paths)
 
     def _write_text_file(path: str, content: str) -> Dict[str, Any]:
         return write_text_file(path=path, content=content, workspace=workspace)
@@ -264,6 +326,118 @@ def build_basic_tools(
             "result": result,
         }
 
+    def _list_skills(category: Optional[str] = None) -> Dict[str, Any]:
+        skills = registry.list_skills(category=category)
+        manifests = registry.list_skill_manifests(category=category)
+        return {
+            "status": "ok",
+            "skills": skills,
+            "manifests": manifests,
+            "count": len(skills) + len(manifests),
+        }
+
+    def _use_skill(
+        name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return {
+                "status": "error",
+                "error_code": "INVALID_ARGUMENTS",
+                "skill": name,
+            }
+        result = registry.execute(skill_agent, name, **arguments)
+        return {
+            "status": "ok" if result.get("success") else "error",
+            "skill": name,
+            "result": result,
+        }
+
+    def _discover_skill_manifests(
+        roots: Optional[Any] = None,
+        category: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        scan_roots = _as_path_list(roots) or skill_root_paths or [install_root]
+        try:
+            count = registry.discover_manifests(scan_roots)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error_code": "SKILL_DISCOVERY_FAILED",
+                "error": str(exc),
+            }
+        return {
+            "status": "ok",
+            "count": count,
+            "roots": [str(root) for root in scan_roots],
+            "manifests": registry.list_skill_manifests(category=category),
+        }
+
+    def _install_skill_from_path(
+        path: str,
+        overwrite: bool = False,
+    ) -> Dict[str, Any]:
+        from aerospace_agent.skills.manifest import validate_skill_manifest
+
+        source = Path(path).resolve()
+        if source.is_file() and source.name == "SKILL.md":
+            source_dir = source.parent
+            manifest_path = source
+        else:
+            source_dir = source
+            manifest_path = source_dir / "SKILL.md"
+
+        if not manifest_path.is_file():
+            return {
+                "status": "error",
+                "error_code": "MISSING_SKILL_MD",
+                "path": str(source),
+            }
+
+        manifest = validate_skill_manifest(manifest_path, root=source_dir)
+        target_name = _safe_skill_dir_name(manifest.get("name") or source_dir.name)
+        target_dir = install_root / target_name
+
+        if target_dir.exists() and not overwrite:
+            return {
+                "status": "error",
+                "error_code": "SKILL_ALREADY_INSTALLED",
+                "installed_path": str(target_dir),
+                "manifest": manifest,
+            }
+
+        try:
+            target_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source_dir, target_dir, dirs_exist_ok=overwrite)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error_code": "SKILL_INSTALL_FAILED",
+                "error": str(exc),
+                "path": str(source),
+            }
+
+        installed_manifest = validate_skill_manifest(
+            target_dir / "SKILL.md",
+            root=install_root,
+        )
+        if install_root not in getattr(registry, "skill_roots", []):
+            try:
+                registry.skill_roots.append(install_root)
+            except Exception:
+                pass
+        try:
+            registry.discover_manifests([install_root])
+        except Exception:
+            pass
+        return {
+            "status": "ok",
+            "installed_path": str(target_dir),
+            "manifest": installed_manifest,
+        }
+
     return [
         BasicTool(
             name="write_text_file",
@@ -285,12 +459,36 @@ def build_basic_tools(
             description="Call a method on a base MCP tool by name.",
             func=_call_mcp_tool,
         ),
+        BasicTool(
+            name="list_skills",
+            description="List registered Python skills and discovered SKILL.md manifests.",
+            func=_list_skills,
+        ),
+        BasicTool(
+            name="use_skill",
+            description="Execute a registered Python skill by name.",
+            func=_use_skill,
+        ),
+        BasicTool(
+            name="discover_skill_manifests",
+            description="Discover declarative SKILL.md manifests from local roots.",
+            func=_discover_skill_manifests,
+        ),
+        BasicTool(
+            name="install_skill_from_path",
+            description="Install a local directory containing SKILL.md into the workspace skill root.",
+            func=_install_skill_from_path,
+        ),
     ]
 
 
 def build_langchain_tools(
     workspace: Optional[Path] = None,
     mcp_tools: Optional[Any] = None,
+    skill_registry: Optional[Any] = None,
+    skill_agent: Optional[Any] = None,
+    skill_roots: Optional[Any] = None,
+    skill_install_dir: Optional[Path] = None,
 ) -> List[Any]:
     """Build LangChain StructuredTool objects when langchain-core exists."""
     try:
@@ -299,7 +497,14 @@ def build_langchain_tools(
         return []
 
     lc_tools = []
-    for tool in build_basic_tools(workspace, mcp_tools=mcp_tools):
+    for tool in build_basic_tools(
+        workspace,
+        mcp_tools=mcp_tools,
+        skill_registry=skill_registry,
+        skill_agent=skill_agent,
+        skill_roots=skill_roots,
+        skill_install_dir=skill_install_dir,
+    ):
 
         def _run(_tool: BasicTool = tool, **kwargs: Any) -> str:
             return json.dumps(_tool.invoke(kwargs), ensure_ascii=False, default=str)
@@ -340,6 +545,10 @@ class BasicLangChainAgent:
         memory: Optional[SlidingWindowMemory] = None,
         rag: Optional[Any] = None,
         mcp_tools: Optional[Any] = None,
+        skill_registry: Optional[Any] = None,
+        skill_agent: Optional[Any] = None,
+        skill_roots: Optional[Any] = None,
+        skill_install_dir: Optional[Path] = None,
     ) -> None:
         self.llm = llm
         self.workspace = (workspace or Path.cwd()).resolve()
@@ -350,10 +559,32 @@ class BasicLangChainAgent:
         )
         self.rag = rag
         self.mcp_tools = mcp_tools
-        self.tools = build_basic_tools(self.workspace, mcp_tools=self.mcp_tools)
+        self.skill_registry = _resolve_skill_registry(
+            skill_registry,
+            _as_path_list(skill_roots),
+        )
+        self.skill_agent = skill_agent
+        self.skill_roots = skill_roots
+        self.skill_install_dir = (
+            Path(skill_install_dir)
+            if skill_install_dir is not None
+            else self.workspace / self.config.skill_install_dir
+        ).resolve()
+        self.tools = build_basic_tools(
+            self.workspace,
+            mcp_tools=self.mcp_tools,
+            skill_registry=self.skill_registry,
+            skill_agent=self.skill_agent,
+            skill_roots=self.skill_roots,
+            skill_install_dir=self.skill_install_dir,
+        )
         self.langchain_tools = build_langchain_tools(
             self.workspace,
             mcp_tools=self.mcp_tools,
+            skill_registry=self.skill_registry,
+            skill_agent=self.skill_agent,
+            skill_roots=self.skill_roots,
+            skill_install_dir=self.skill_install_dir,
         )
         self.backend = "langchain-core" if self.langchain_tools else "builtin"
         self._runnable = _langchain_runnable(self._call_llm_once)
@@ -370,13 +601,30 @@ class BasicLangChainAgent:
         self,
         rag: Optional[Any] = None,
         mcp_tools: Optional[Any] = None,
+        skill_registry: Optional[Any] = None,
+        skill_agent: Optional[Any] = None,
     ) -> None:
         self.rag = rag
         self.mcp_tools = mcp_tools
-        self.tools = build_basic_tools(self.workspace, mcp_tools=self.mcp_tools)
+        if skill_registry is not None:
+            self.skill_registry = skill_registry
+        if skill_agent is not None:
+            self.skill_agent = skill_agent
+        self.tools = build_basic_tools(
+            self.workspace,
+            mcp_tools=self.mcp_tools,
+            skill_registry=self.skill_registry,
+            skill_agent=self.skill_agent,
+            skill_roots=self.skill_roots,
+            skill_install_dir=self.skill_install_dir,
+        )
         self.langchain_tools = build_langchain_tools(
             self.workspace,
             mcp_tools=self.mcp_tools,
+            skill_registry=self.skill_registry,
+            skill_agent=self.skill_agent,
+            skill_roots=self.skill_roots,
+            skill_install_dir=self.skill_install_dir,
         )
         self.backend = "langchain-core" if self.langchain_tools else "builtin"
 
@@ -651,6 +899,10 @@ def create_basic_langchain_agent(
     memory: Optional[SlidingWindowMemory] = None,
     rag: Optional[Any] = None,
     mcp_tools: Optional[Any] = None,
+    skill_registry: Optional[Any] = None,
+    skill_agent: Optional[Any] = None,
+    skill_roots: Optional[Any] = None,
+    skill_install_dir: Optional[Path] = None,
 ) -> BasicLangChainAgent:
     return BasicLangChainAgent(
         llm=llm,
@@ -659,4 +911,8 @@ def create_basic_langchain_agent(
         memory=memory,
         rag=rag,
         mcp_tools=mcp_tools,
+        skill_registry=skill_registry,
+        skill_agent=skill_agent,
+        skill_roots=skill_roots,
+        skill_install_dir=skill_install_dir,
     )

@@ -9,6 +9,7 @@ __pycache__/
 /demo_outputs/*.png
 /demo_output/
 /.test_runs/
+/.aerospace_skills/
 /aerospace_agent/langchain_agent/react_agent.py
 /aerospace_agent/langchain_agent/react_parser.py
 

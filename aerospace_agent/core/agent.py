@@ -959,11 +959,15 @@ class AerospaceAgent:
                 config=config,
                 rag=getattr(self, "rag", None),
                 mcp_tools=getattr(self, "mcp_tools", None),
+                skill_registry=getattr(self, "skills", None),
+                skill_agent=self,
             )
         else:
             self._basic_langchain_agent.set_interfaces(
                 rag=getattr(self, "rag", None),
                 mcp_tools=getattr(self, "mcp_tools", None),
+                skill_registry=getattr(self, "skills", None),
+                skill_agent=self,
             )
         agent = self._basic_langchain_agent
         result = agent.invoke(task)
