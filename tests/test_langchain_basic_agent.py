@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 from aerospace_agent.langchain_agent.basic_agent import (
     BasicAgentConfig,
@@ -7,6 +8,7 @@ from aerospace_agent.langchain_agent.basic_agent import (
     build_basic_tools,
     write_text_file,
 )
+from aerospace_agent.skills.defaults import install_default_skill_manifests
 from aerospace_agent.cli_tui import CEOEngine, Stats
 from aerospace_agent.core.agent import AerospaceAgent
 from aerospace_agent.skills.base import SkillBase
@@ -36,10 +38,15 @@ class OneShotLLM:
 class FakeRAG:
     def __init__(self):
         self.calls = []
+        self.indexed = []
 
     def retrieve(self, query, top_k=3):
         self.calls.append((query, top_k))
         return [{"text": "RAG evidence alpha", "source": "fake"}]
+
+    def index(self, doc_or_dir, **kwargs):
+        self.indexed.append((doc_or_dir, kwargs))
+        return 1
 
 
 class FakeMCPTool:
@@ -209,6 +216,9 @@ def test_build_basic_tools_exposes_minimal_safe_tools():
         "use_skill",
         "discover_skill_manifests",
         "install_skill_from_path",
+        "run_terminal_command",
+        "run_literature_keyword_cloud_workflow",
+        "index_orbit_dynamics_rag",
     ]
 
 
@@ -313,8 +323,112 @@ category: analysis
     assert result["status"] == "ok"
     assert result["manifest"]["name"] == "sensor-check"
     assert Path(result["installed_path"], "SKILL.md").exists()
-    assert use_result["status"] == "error"
-    assert use_result["result"]["error_code"] == "SKILL_NOT_EXECUTABLE"
+    assert use_result["status"] == "ok"
+    assert use_result["result"]["execution_mode"] == "instruction_context"
+    assert "Sensor Check" in use_result["result"]["instructions"]
+
+
+def test_default_skill_manifests_can_be_installed_from_roots():
+    workspace = _workspace("default_skills")
+    super_root = workspace / "superpowers"
+    pdf_root = workspace / "pdf-root"
+    (super_root / "brainstorming").mkdir(parents=True, exist_ok=True)
+    (super_root / "brainstorming" / "SKILL.md").write_text(
+        "---\nname: brainstorming\ndescription: Think before coding.\n---\n# Brainstorming\n",
+        encoding="utf-8",
+    )
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    (pdf_root / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Work with PDF files.\n---\n# PDF\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry()
+
+    count = install_default_skill_manifests(registry, roots=[super_root, pdf_root])
+    names = {item["name"] for item in registry.list_skill_manifests()}
+
+    assert count == 2
+    assert {"brainstorming", "pdf"}.issubset(names)
+
+
+def test_use_declarative_skill_returns_instruction_context():
+    workspace = _workspace("skill_instruction")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Work with PDF files.\n---\n# PDF Skill\nUse local scripts when no PDF tool is available.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    tools = build_basic_tools(workspace, skill_registry=registry)
+    use_tool = next(tool for tool in tools if tool.name == "use_skill")
+
+    result = use_tool.invoke({"name": "pdf"})
+
+    assert result["status"] == "ok"
+    assert result["result"]["execution_mode"] == "instruction_context"
+    assert "Use local scripts" in result["result"]["instructions"]
+
+
+def test_terminal_command_fallback_runs_without_shell():
+    workspace = _workspace("terminal")
+    tools = build_basic_tools(workspace)
+    run_tool = next(tool for tool in tools if tool.name == "run_terminal_command")
+
+    result = run_tool.invoke({
+        "cmd": [sys.executable, "-c", "print('fallback-ok')"],
+        "timeout": 10,
+    })
+
+    assert result["status"] == "ok"
+    assert result["returncode"] == 0
+    assert "fallback-ok" in result["stdout"]
+
+
+def test_literature_keyword_cloud_workflow_creates_artifacts():
+    workspace = _workspace("lit_cloud")
+    tools = build_basic_tools(workspace)
+    workflow_tool = next(
+        tool for tool in tools if tool.name == "run_literature_keyword_cloud_workflow"
+    )
+
+    result = workflow_tool.invoke({
+        "query": "orbit determination small body dynamics",
+        "papers": [
+            {
+                "title": "Orbit determination with optical angles",
+                "abstract": "Orbit determination uses optical measurements and dynamical models.",
+            },
+            {
+                "title": "Perturbed orbit propagation",
+                "abstract": "J2 perturbation and atmospheric drag affect propagation accuracy.",
+            },
+        ],
+        "output_dir": "artifacts/lit_cloud",
+        "max_keywords": 8,
+    })
+
+    assert result["status"] == "ok"
+    assert result["paper_count"] == 2
+    assert any(item["term"] == "orbit" for item in result["keywords"])
+    for path in result["artifacts"].values():
+        assert Path(path).exists()
+
+
+def test_orbit_dynamics_rag_seed_indexes_documents():
+    workspace = _workspace("orbit_rag")
+    rag = FakeRAG()
+    tools = build_basic_tools(workspace, rag=rag)
+    index_tool = next(tool for tool in tools if tool.name == "index_orbit_dynamics_rag")
+
+    result = index_tool.invoke()
+
+    assert result["status"] == "ok"
+    assert result["indexed_count"] >= 5
+    assert len(rag.indexed) == result["indexed_count"]
+    assert "frames_and_time" in result["topics"]
 
 
 def test_cli_engine_uses_langchain_even_if_legacy_mode_is_requested():

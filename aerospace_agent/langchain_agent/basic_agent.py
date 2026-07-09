@@ -171,6 +171,18 @@ def _tool_catalog() -> List[Dict[str, str]]:
             "name": "install_skill_from_path",
             "description": "Install a local directory containing SKILL.md into the workspace skill root.",
         },
+        {
+            "name": "run_terminal_command",
+            "description": "Run a non-shell local command in the workspace as a fallback executor.",
+        },
+        {
+            "name": "run_literature_keyword_cloud_workflow",
+            "description": "Search/provide literature items and render keyword cloud artifacts.",
+        },
+        {
+            "name": "index_orbit_dynamics_rag",
+            "description": "Index the built-in orbit-dynamics expert seed corpus into RAG.",
+        },
     ]
 
 
@@ -201,18 +213,22 @@ def _resolve_skill_registry(
     skill_roots: Optional[List[Path]] = None,
 ) -> Any:
     if skill_registry is not None:
+        if skill_roots:
+            from aerospace_agent.skills.defaults import install_default_skill_manifests
+            install_default_skill_manifests(skill_registry, roots=skill_roots)
         return skill_registry
     from aerospace_agent.skills.registry import SkillRegistry
-    registry = SkillRegistry(skill_roots=skill_roots or [])
+    from aerospace_agent.skills.defaults import default_skill_roots, install_default_skill_manifests
+    roots = skill_roots if skill_roots is not None else default_skill_roots()
+    registry = SkillRegistry(skill_roots=roots)
     try:
         registry.auto_discover()
     except Exception:
         pass
-    if skill_roots:
-        try:
-            registry.discover_manifests(skill_roots)
-        except Exception:
-            pass
+    try:
+        install_default_skill_manifests(registry, roots=roots)
+    except Exception:
+        pass
     return registry
 
 
@@ -236,6 +252,7 @@ def build_basic_tools(
     skill_agent: Optional[Any] = None,
     skill_roots: Optional[Any] = None,
     skill_install_dir: Optional[Path] = None,
+    rag: Optional[Any] = None,
 ) -> List[BasicTool]:
     workspace = (workspace or Path.cwd()).resolve()
     skill_root_paths = _as_path_list(skill_roots)
@@ -349,6 +366,40 @@ def build_basic_tools(
                 "skill": name,
             }
         result = registry.execute(skill_agent, name, **arguments)
+        if result.get("error_code") == "SKILL_NOT_EXECUTABLE":
+            manifest = registry.get_manifest(name)
+            if manifest:
+                try:
+                    instructions = Path(manifest["path"]).read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    instructions = Path(manifest["path"]).read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                except Exception as exc:
+                    return {
+                        "status": "error",
+                        "skill": name,
+                        "result": {
+                            "success": False,
+                            "error_code": "SKILL_INSTRUCTIONS_UNREADABLE",
+                            "message": str(exc),
+                        },
+                    }
+                return {
+                    "status": "ok",
+                    "skill": name,
+                    "result": {
+                        "success": True,
+                        "execution_mode": "instruction_context",
+                        "manifest": manifest,
+                        "instructions": instructions,
+                        "message": (
+                            "Declarative skill loaded as instructions. "
+                            "Use run_terminal_command/write_text_file for fallback execution."
+                        ),
+                    },
+                }
         return {
             "status": "ok" if result.get("success") else "error",
             "skill": name,
@@ -438,6 +489,67 @@ def build_basic_tools(
             "manifest": installed_manifest,
         }
 
+    def _run_terminal_command(
+        cmd: List[str],
+        timeout: float = 60,
+        max_output_chars: int = 12000,
+    ) -> Dict[str, Any]:
+        if isinstance(cmd, str) or not isinstance(cmd, list) or not cmd:
+            return {
+                "status": "error",
+                "error_code": "INVALID_COMMAND",
+                "message": "cmd must be a non-empty list; shell strings are not accepted.",
+            }
+        from aerospace_agent.local_runtime import run_command
+        result = run_command(
+            cmd,
+            cwd=workspace,
+            timeout=timeout,
+            max_output_chars=max_output_chars,
+        )
+        return {
+            "status": "ok" if result.ok else "error",
+            "cmd": result.cmd,
+            "cwd": result.cwd,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "timeout": result.timeout,
+            "encoding": result.encoding,
+        }
+
+    def _run_literature_keyword_cloud_workflow(
+        query: str,
+        papers: Optional[List[Any]] = None,
+        output_dir: str = "artifacts/literature_keyword_cloud",
+        max_results: int = 10,
+        max_keywords: int = 30,
+    ) -> Dict[str, Any]:
+        from aerospace_agent.workflows.literature_keyword_cloud import (
+            run_literature_keyword_cloud_workflow,
+        )
+        try:
+            out = _workspace_path(str(output_dir), workspace)
+        except ValueError:
+            return {
+                "status": "error",
+                "error_code": "PATH_OUTSIDE_WORKSPACE",
+                "output_dir": output_dir,
+                "workspace": str(workspace),
+            }
+        return run_literature_keyword_cloud_workflow(
+            query=query,
+            papers=papers,
+            rag=rag,
+            output_dir=out,
+            max_results=max_results,
+            max_keywords=max_keywords,
+        )
+
+    def _index_orbit_dynamics_rag() -> Dict[str, Any]:
+        from aerospace_agent.rag.orbit_dynamics import index_orbit_dynamics_corpus
+        return index_orbit_dynamics_corpus(rag)
+
     return [
         BasicTool(
             name="write_text_file",
@@ -479,6 +591,21 @@ def build_basic_tools(
             description="Install a local directory containing SKILL.md into the workspace skill root.",
             func=_install_skill_from_path,
         ),
+        BasicTool(
+            name="run_terminal_command",
+            description="Run a non-shell local command in the workspace as a fallback executor.",
+            func=_run_terminal_command,
+        ),
+        BasicTool(
+            name="run_literature_keyword_cloud_workflow",
+            description="Search/provide literature items and render keyword cloud artifacts.",
+            func=_run_literature_keyword_cloud_workflow,
+        ),
+        BasicTool(
+            name="index_orbit_dynamics_rag",
+            description="Index the built-in orbit-dynamics expert seed corpus into RAG.",
+            func=_index_orbit_dynamics_rag,
+        ),
     ]
 
 
@@ -489,6 +616,7 @@ def build_langchain_tools(
     skill_agent: Optional[Any] = None,
     skill_roots: Optional[Any] = None,
     skill_install_dir: Optional[Path] = None,
+    rag: Optional[Any] = None,
 ) -> List[Any]:
     """Build LangChain StructuredTool objects when langchain-core exists."""
     try:
@@ -504,6 +632,7 @@ def build_langchain_tools(
         skill_agent=skill_agent,
         skill_roots=skill_roots,
         skill_install_dir=skill_install_dir,
+        rag=rag,
     ):
 
         def _run(_tool: BasicTool = tool, **kwargs: Any) -> str:
@@ -577,6 +706,7 @@ class BasicLangChainAgent:
             skill_agent=self.skill_agent,
             skill_roots=self.skill_roots,
             skill_install_dir=self.skill_install_dir,
+            rag=self.rag,
         )
         self.langchain_tools = build_langchain_tools(
             self.workspace,
@@ -585,6 +715,7 @@ class BasicLangChainAgent:
             skill_agent=self.skill_agent,
             skill_roots=self.skill_roots,
             skill_install_dir=self.skill_install_dir,
+            rag=self.rag,
         )
         self.backend = "langchain-core" if self.langchain_tools else "builtin"
         self._runnable = _langchain_runnable(self._call_llm_once)
@@ -617,6 +748,7 @@ class BasicLangChainAgent:
             skill_agent=self.skill_agent,
             skill_roots=self.skill_roots,
             skill_install_dir=self.skill_install_dir,
+            rag=self.rag,
         )
         self.langchain_tools = build_langchain_tools(
             self.workspace,
@@ -625,6 +757,7 @@ class BasicLangChainAgent:
             skill_agent=self.skill_agent,
             skill_roots=self.skill_roots,
             skill_install_dir=self.skill_install_dir,
+            rag=self.rag,
         )
         self.backend = "langchain-core" if self.langchain_tools else "builtin"
 

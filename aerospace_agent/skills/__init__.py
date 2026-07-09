@@ -18,6 +18,7 @@ from __future__ import annotations
 from .base import SkillBase
 from .manifest import SkillManifest, discover_skill_manifests, validate_skill_manifest
 from .registry import SkillRegistry
+from .defaults import default_skill_roots, install_default_skill_manifests
 from .context_skill import ContextManagementSkill
 from .memory_skill import MemoryRecallSkill
 from .rag_skill import KnowledgeRetrievalSkill
@@ -28,6 +29,8 @@ __all__ = [
     "SkillBase",
     "SkillManifest",
     "discover_skill_manifests",
+    "default_skill_roots",
+    "install_default_skill_manifests",
     "validate_skill_manifest",
     "SkillRegistry",
     "ContextManagementSkill",

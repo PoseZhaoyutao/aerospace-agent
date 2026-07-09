@@ -1931,8 +1931,10 @@ def create_default_agent(max_steps: int = 10,
     # 9. 挂载 Skill 注册表（自动发现所有内置 Skill）
     try:
         from ..skills import SkillRegistry
+        from ..skills.defaults import install_default_skill_manifests
         agent.skills = SkillRegistry()
         agent.skills.auto_discover()
+        install_default_skill_manifests(agent.skills)
     except Exception as exc:
         _logger.warning("步骤9 SkillRegistry 挂载失败: %s", exc)
     # 9.5 挂载 MemoryManager (统一管理三层记忆,接入主流程)
