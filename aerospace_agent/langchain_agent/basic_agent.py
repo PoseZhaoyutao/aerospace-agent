@@ -938,7 +938,7 @@ class BasicLangChainAgent:
             tool_result = self._tool("use_skill").invoke({"name": skill_name})
             return BasicAgentResult(
                 ok=tool_result.get("status") == "ok",
-                output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+                output=self._format_direct_skill_output(skill_name, tool_result, task),
                 action="use_skill",
                 backend=self.backend,
                 metadata={"tool_result": tool_result},
@@ -966,9 +966,11 @@ class BasicLangChainAgent:
                 return self._resolve_skill_name(match.group(1))
 
         load_intent = (
-            any(word in task for word in ("加载", "读取", "查看", "显示"))
+            any(word in task for word in ("加载", "读取", "查看", "显示", "使用", "调用"))
+            or ("用" in task and "技能" in task)
             or ("load" in lowered and "skill" in lowered)
             or ("show" in lowered and "skill" in lowered)
+            or ("use" in lowered and "skill" in lowered)
         )
         if not load_intent or "技能" not in task and "skill" not in lowered:
             return None
@@ -977,6 +979,50 @@ class BasicLangChainAgent:
             if self._task_mentions_skill(task, name):
                 return name
         return None
+
+    def _format_direct_skill_output(
+        self,
+        skill_name: str,
+        tool_result: Dict[str, Any],
+        task: str,
+    ) -> str:
+        status = tool_result.get("status", "unknown")
+        payload = tool_result.get("result") or {}
+        lines = [
+            f"skill: {skill_name}",
+            f"status: {status}",
+            f"execution_mode: {payload.get('execution_mode', 'python_executor')}",
+        ]
+        manifest = payload.get("manifest") or {}
+        if manifest.get("path"):
+            lines.append(f"path: {manifest['path']}")
+
+        if self._is_pdf_skill_without_pdf_path(skill_name, task):
+            lines.append(
+                "未提供 PDF 文件路径，不能执行版式检查；当前只完成了 pdf 技能加载。"
+            )
+            lines.append(
+                "请提供本地 .pdf 路径后再执行，例如：使用 pdf 技能检查 D:\\path\\paper.pdf"
+            )
+
+        instructions = str(payload.get("instructions") or "")
+        if instructions:
+            lines.append("")
+            lines.append("instructions:")
+            lines.append(instructions)
+        else:
+            lines.append("")
+            lines.append("raw_result:")
+            lines.append(json.dumps(tool_result, ensure_ascii=False, indent=2, default=str))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_pdf_skill_without_pdf_path(skill_name: str, task: str) -> bool:
+        if skill_name.lower().split(":")[-1] != "pdf":
+            return False
+        wants_check = any(word in task.lower() for word in ("检查", "审查", "查看", "inspect", "review", "check"))
+        has_pdf_path = re.search(r"(?i)(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|/)?[^\s，。；;]+\.pdf\b", task) is not None
+        return wants_check and not has_pdf_path
 
     def _skill_contexts_for_task(self, task: str) -> List[Dict[str, Any]]:
         if not self.config.enable_skill_context:

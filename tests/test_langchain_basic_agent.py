@@ -216,13 +216,56 @@ def test_agent_injects_explicit_declarative_skill_context():
     llm = OneShotLLM("pdf-context answer")
     agent = BasicLangChainAgent(llm=llm, workspace=workspace, skill_registry=registry)
 
-    result = agent.invoke("请使用 pdf 技能检查这个 PDF 的版式")
+    result = agent.invoke("$pdf 请给出检查 PDF 版式的流程")
 
     assert result.ok is True
     assert result.action == "llm_once"
     assert result.metadata["skills"][0]["name"] == "pdf"
     assert any("PDF Skill" in message["content"] for message in llm.messages)
     assert any("Render pages before trusting layout" in message["content"] for message in llm.messages)
+
+
+def test_agent_routes_use_skill_work_request_without_llm():
+    workspace = _workspace("agent_use_skill_work")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nRender pages before trusting layout.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    agent = BasicLangChainAgent(llm=ExplodingLLM(), workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("请使用 pdf 技能检查这个 PDF")
+
+    assert result.ok is True
+    assert result.action == "use_skill"
+    assert "instruction_context" in result.output
+    assert "Render pages before trusting layout" in result.output
+    assert "未提供 PDF 文件路径" in result.output
+
+
+def test_aerospace_agent_run_langchain_routes_use_skill_without_llm():
+    workspace = _workspace("core_run_langchain_use_skill")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nRender pages before trusting layout.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    agent = AerospaceAgent(llm=ExplodingLLM(), tools=[])
+    agent.skills = registry
+
+    result = agent.run_langchain("请使用 pdf 技能检查这个 PDF")
+
+    assert "execution_mode: instruction_context" in result
+    assert "未提供 PDF 文件路径" in result
+    assert "Render pages before trusting layout" in result
 
 
 def test_agent_routes_direct_list_skills_request_without_llm():
