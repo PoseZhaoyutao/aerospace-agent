@@ -6,6 +6,7 @@ from aerospace_agent.langchain_agent.basic_agent import (
     BasicLangChainAgent,
     SlidingWindowMemory,
     build_basic_tools,
+    extract_pdf_text,
     write_text_file,
 )
 from aerospace_agent.skills.defaults import install_default_skill_manifests
@@ -96,6 +97,22 @@ def _workspace(name: str) -> Path:
     return root.resolve()
 
 
+def _write_simple_pdf(path: Path, text: str = "Hello PDF") -> None:
+    path.write_bytes(
+        (
+            "%PDF-1.4\n"
+            "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+            "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+            "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            "/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n"
+            f"4 0 obj << /Length 64 >> stream\nBT /F1 24 Tf 100 700 Td ({text}) Tj ET\n"
+            "endstream endobj\n"
+            "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+            "trailer << /Root 1 0 R >>\n%%EOF\n"
+        ).encode("latin-1")
+    )
+
+
 def test_write_text_file_rejects_path_escape():
     workspace = _workspace("reject_escape")
 
@@ -115,6 +132,18 @@ def test_write_text_file_writes_inside_workspace():
     written = Path(result["path"])
     assert written == workspace / "demo" / "index.html"
     assert written.read_text(encoding="utf-8") == "hello"
+
+
+def test_extract_pdf_text_reads_simple_local_pdf():
+    workspace = _workspace("pdf_extract")
+    pdf_path = workspace / "sample.pdf"
+    _write_simple_pdf(pdf_path, text="Hello PDF")
+
+    result = extract_pdf_text("sample.pdf", workspace=workspace)
+
+    assert result["status"] == "ok"
+    assert result["path"] == str(pdf_path)
+    assert "Hello PDF" in result["text"]
 
 
 def test_basic_agent_generates_static_site_without_llm_loop():
@@ -202,6 +231,29 @@ def test_agent_injects_rag_context_when_available():
     assert any("RAG evidence alpha" in message["content"] for message in llm.messages)
 
 
+def test_agent_keeps_system_message_at_beginning_with_contexts():
+    workspace = _workspace("system_message_order")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nRender pages before trusting layout.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    llm = OneShotLLM("ordered")
+    agent = BasicLangChainAgent(llm=llm, workspace=workspace, skill_registry=registry, rag=FakeRAG())
+
+    result = agent.invoke("$pdf current question")
+
+    assert result.ok is True
+    assert [message["role"] for message in llm.messages].count("system") == 1
+    assert llm.messages[0]["role"] == "system"
+    assert "PDF Skill" in llm.messages[0]["content"]
+    assert "RAG evidence alpha" in llm.messages[0]["content"]
+
+
 def test_agent_injects_explicit_declarative_skill_context():
     workspace = _workspace("agent_skill_context")
     skill_root = workspace / "skills"
@@ -245,6 +297,30 @@ def test_agent_routes_use_skill_work_request_without_llm():
     assert "instruction_context" in result.output
     assert "Render pages before trusting layout" in result.output
     assert "未提供 PDF 文件路径" in result.output
+
+
+def test_agent_routes_pdf_skill_with_path_and_extracts_text_without_llm():
+    workspace = _workspace("agent_pdf_skill_extract")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nRender pages before trusting layout.\n",
+        encoding="utf-8",
+    )
+    pdf_path = workspace / "sample.pdf"
+    _write_simple_pdf(pdf_path, text="Hello PDF")
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    agent = BasicLangChainAgent(llm=ExplodingLLM(), workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("请使用 pdf 技能检查 sample.pdf")
+
+    assert result.ok is True
+    assert result.action == "use_skill"
+    assert "pdf_extract:" in result.output
+    assert "status: ok" in result.output
+    assert "Hello PDF" in result.output
 
 
 def test_aerospace_agent_run_langchain_routes_use_skill_without_llm():
@@ -323,6 +399,38 @@ def test_agent_routes_english_load_skill_request_without_llm():
     assert "Use Poppler when available" in result.output
 
 
+def test_agent_routes_list_mcp_tools_without_llm():
+    workspace = _workspace("agent_list_mcp")
+    agent = BasicLangChainAgent(
+        llm=ExplodingLLM(),
+        workspace=workspace,
+        mcp_tools={"dummy": FakeMCPTool()},
+    )
+
+    result = agent.invoke("你现在连接的mcp工具有哪些")
+
+    assert result.ok is True
+    assert result.action == "list_mcp_tools"
+    assert "dummy" in result.output
+    assert "fake mcp tool" in result.output
+
+
+def test_agent_routes_call_mcp_tool_without_llm():
+    workspace = _workspace("agent_call_mcp")
+    agent = BasicLangChainAgent(
+        llm=ExplodingLLM(),
+        workspace=workspace,
+        mcp_tools={"dummy": FakeMCPTool()},
+    )
+
+    result = agent.invoke('call mcp tool dummy.ping {"value": 7}')
+
+    assert result.ok is True
+    assert result.action == "call_mcp_tool"
+    assert '"echo": {' in result.output
+    assert '"value": 7' in result.output
+
+
 def test_build_basic_tools_exposes_minimal_safe_tools():
     workspace = _workspace("tools")
 
@@ -330,6 +438,7 @@ def test_build_basic_tools_exposes_minimal_safe_tools():
 
     assert [tool.name for tool in tools] == [
         "write_text_file",
+        "extract_pdf_text",
         "list_basic_tools",
         "list_mcp_tools",
         "call_mcp_tool",

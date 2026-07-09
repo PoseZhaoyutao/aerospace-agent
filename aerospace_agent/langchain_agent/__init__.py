@@ -19,6 +19,7 @@ from .basic_agent import (
     build_basic_tools,
     build_langchain_tools,
     create_basic_langchain_agent,
+    extract_pdf_text,
     write_text_file,
 )
 
@@ -38,5 +39,6 @@ __all__ = [
     "build_basic_tools",
     "build_langchain_tools",
     "create_basic_langchain_agent",
+    "extract_pdf_text",
     "write_text_file",
 ]

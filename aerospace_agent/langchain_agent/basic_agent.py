@@ -140,11 +140,121 @@ def write_text_file(
     }
 
 
+def _pdf_literal_unescape(value: str) -> str:
+    replacements = {
+        r"\(": "(",
+        r"\)": ")",
+        r"\\": "\\",
+        r"\n": "\n",
+        r"\r": "\r",
+        r"\t": "\t",
+        r"\b": "\b",
+        r"\f": "\f",
+    }
+    for old, new in replacements.items():
+        value = value.replace(old, new)
+    return re.sub(
+        r"\\([0-7]{1,3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def _fallback_extract_pdf_text(path: Path, max_chars: int) -> str:
+    raw = path.read_bytes()
+    text = raw.decode("latin-1", errors="ignore")
+    chunks = []
+    for match in re.finditer(r"\((.*?)(?<!\\)\)\s*Tj", text, flags=re.DOTALL):
+        chunks.append(_pdf_literal_unescape(match.group(1)))
+    for array_match in re.finditer(r"\[(.*?)\]\s*TJ", text, flags=re.DOTALL):
+        chunks.extend(
+            _pdf_literal_unescape(item)
+            for item in re.findall(r"\((.*?)(?<!\\)\)", array_match.group(1), flags=re.DOTALL)
+        )
+    return "\n".join(chunk for chunk in chunks if chunk).strip()[:max_chars]
+
+
+def extract_pdf_text(
+    path: str,
+    workspace: Optional[Path] = None,
+    max_chars: int = 12000,
+) -> Dict[str, Any]:
+    """Extract text from a local PDF with pdftotext plus a simple fallback."""
+
+    workspace = (workspace or Path.cwd()).resolve()
+    source = Path(path).expanduser()
+    if not source.is_absolute():
+        source = workspace / source
+    source = source.resolve()
+
+    if not source.is_file():
+        return {
+            "status": "error",
+            "error_code": "PDF_NOT_FOUND",
+            "path": str(source),
+        }
+    if source.suffix.lower() != ".pdf":
+        return {
+            "status": "error",
+            "error_code": "NOT_A_PDF",
+            "path": str(source),
+        }
+
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext:
+        from aerospace_agent.local_runtime import run_command
+
+        result = run_command(
+            [pdftotext, "-layout", str(source), "-"],
+            cwd=workspace,
+            timeout=30,
+            max_output_chars=max_chars,
+        )
+        if result.ok and result.stdout.strip():
+            return {
+                "status": "ok",
+                "path": str(source),
+                "method": "pdftotext",
+                "text": result.stdout[:max_chars],
+                "chars": len(result.stdout[:max_chars]),
+                "stderr": result.stderr,
+            }
+
+    try:
+        text = _fallback_extract_pdf_text(source, max_chars=max_chars)
+    except Exception as exc:
+        return {
+            "status": "error",
+            "error_code": "PDF_EXTRACT_FAILED",
+            "path": str(source),
+            "error": str(exc),
+        }
+
+    if not text:
+        return {
+            "status": "unavailable",
+            "error_code": "PDF_TEXT_UNAVAILABLE",
+            "path": str(source),
+            "message": "pdftotext unavailable/failed and fallback found no uncompressed text.",
+        }
+    return {
+        "status": "ok",
+        "path": str(source),
+        "method": "fallback_pdf_literals",
+        "text": text,
+        "chars": len(text),
+    }
+
+
 def _tool_catalog() -> List[Dict[str, str]]:
     return [
         {
             "name": "write_text_file",
             "description": "Write a UTF-8 text file under the current workspace.",
+        },
+        {
+            "name": "extract_pdf_text",
+            "description": "Extract text from a local PDF file with pdftotext/fallback parsing.",
         },
         {
             "name": "list_basic_tools",
@@ -268,6 +378,9 @@ def build_basic_tools(
 
     def _write_text_file(path: str, content: str) -> Dict[str, Any]:
         return write_text_file(path=path, content=content, workspace=workspace)
+
+    def _extract_pdf_text(path: str, max_chars: int = 12000) -> Dict[str, Any]:
+        return extract_pdf_text(path=path, workspace=workspace, max_chars=max_chars)
 
     def _list_basic_tools() -> Dict[str, Any]:
         return {"status": "ok", "tools": _tool_catalog()}
@@ -560,6 +673,11 @@ def build_basic_tools(
             func=_write_text_file,
         ),
         BasicTool(
+            name="extract_pdf_text",
+            description="Extract text from a local PDF file with pdftotext/fallback parsing.",
+            func=_extract_pdf_text,
+        ),
+        BasicTool(
             name="list_basic_tools",
             description="Return the minimal built-in tool catalog.",
             func=_list_basic_tools,
@@ -725,6 +843,10 @@ class BasicLangChainAgent:
 
     def invoke(self, task: str) -> BasicAgentResult:
         task = task.strip()
+        direct_mcp_result = self._handle_direct_mcp_request(task)
+        if direct_mcp_result is not None:
+            self._remember(task, direct_mcp_result.output)
+            return direct_mcp_result
         direct_skill_result = self._handle_direct_skill_request(task)
         if direct_skill_result is not None:
             self._remember(task, direct_skill_result.output)
@@ -873,37 +995,100 @@ class BasicLangChainAgent:
         task: str,
         skill_contexts: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, str]]:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是严格、务实的航天软件研究助理。"
-                    "只做一次回答，不使用递归工具循环。"
-                    "没有证据的内容必须标注为假设。"
-                ),
-            },
+        system_parts = [
+            (
+                "你是严格、务实的航天软件研究助理。"
+                "只做一次回答，不使用递归工具循环。"
+                "没有证据的内容必须标注为假设。"
+            ),
         ]
         skill_context_text = self._format_skill_contexts(
             skill_contexts if skill_contexts is not None else self._skill_contexts_for_task(task)
         )
         if skill_context_text:
-            messages.append({
-                "role": "system",
-                "content": skill_context_text,
-            })
+            system_parts.append(skill_context_text)
         rag_context = self._rag_context(task)
         if rag_context:
-            messages.append({
-                "role": "system",
-                "content": "RAG context (unverified evidence, not a conclusion):\n" + rag_context,
-            })
-        messages.extend(self.memory.to_messages())
+            system_parts.append(
+                "RAG context (unverified evidence, not a conclusion):\n" + rag_context
+            )
+        messages = [{"role": "system", "content": "\n\n".join(system_parts)}]
+        for message in self.memory.to_messages():
+            if message.get("role") == "system":
+                messages[0]["content"] += (
+                    "\n\nMemory system note (historical context, not evidence):\n"
+                    + str(message.get("content", ""))
+                )
+            else:
+                messages.append(message)
         messages.append({"role": "user", "content": task})
         return messages
 
     def _remember(self, task: str, output: str) -> None:
         self.memory.add("user", task)
         self.memory.add("assistant", output)
+
+    def _handle_direct_mcp_request(self, task: str) -> Optional[BasicAgentResult]:
+        lowered = task.lower()
+        compact = re.sub(r"\s+", "", lowered)
+        mentions_mcp = "mcp" in lowered
+
+        list_intent = (
+            mentions_mcp
+            and any(word in compact for word in ("有哪些", "列出", "列表", "连接的", "当前连接"))
+        ) or "list mcp tools" in lowered
+        if list_intent:
+            tool_result = self._tool("list_mcp_tools").invoke()
+            return BasicAgentResult(
+                ok=tool_result.get("status") == "ok",
+                output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+                action="list_mcp_tools",
+                backend=self.backend,
+                metadata={"tool_result": tool_result},
+            )
+
+        call_spec = self._extract_mcp_call(task)
+        if call_spec is None:
+            return None
+        name, method, arguments = call_spec
+        tool_result = self._tool("call_mcp_tool").invoke({
+            "name": name,
+            "method": method,
+            "arguments": arguments,
+        })
+        return BasicAgentResult(
+            ok=tool_result.get("status") == "ok",
+            output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+            action="call_mcp_tool",
+            backend=self.backend,
+            metadata={"tool_result": tool_result},
+        )
+
+    @staticmethod
+    def _extract_mcp_call(task: str) -> Optional[tuple[str, str, Dict[str, Any]]]:
+        lowered = task.lower()
+        if "mcp" not in lowered or not any(word in lowered for word in ("call", "调用")):
+            return None
+
+        match = re.search(
+            r"(?:call\s+mcp\s+tool|call\s+mcp|调用\s*mcp\s*工具|调用\s*mcp)\s+"
+            r"([A-Za-z0-9_-]+)(?:[.:/ ]+)([A-Za-z0-9_]+)\s*(\{.*\})?\s*$",
+            task,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+
+        arguments: Dict[str, Any] = {}
+        raw_args = match.group(3)
+        if raw_args:
+            try:
+                parsed = json.loads(raw_args)
+                if isinstance(parsed, dict):
+                    arguments = parsed
+            except json.JSONDecodeError:
+                arguments = {"_raw": raw_args}
+        return match.group(1), match.group(2), arguments
 
     def _handle_direct_skill_request(self, task: str) -> Optional[BasicAgentResult]:
         lowered = task.lower()
@@ -1004,6 +1189,26 @@ class BasicLangChainAgent:
             lines.append(
                 "请提供本地 .pdf 路径后再执行，例如：使用 pdf 技能检查 D:\\path\\paper.pdf"
             )
+        pdf_path = self._extract_pdf_path_from_task(task) if skill_name.lower().split(":")[-1] == "pdf" else None
+        if pdf_path:
+            pdf_result = self._tool("extract_pdf_text").invoke({
+                "path": pdf_path,
+                "max_chars": 12000,
+            })
+            lines.append("")
+            lines.append("pdf_extract:")
+            lines.append(f"status: {pdf_result.get('status')}")
+            lines.append(f"path: {pdf_result.get('path')}")
+            if pdf_result.get("method"):
+                lines.append(f"method: {pdf_result.get('method')}")
+            if pdf_result.get("error_code"):
+                lines.append(f"error_code: {pdf_result.get('error_code')}")
+            if pdf_result.get("message"):
+                lines.append(str(pdf_result.get("message")))
+            text = str(pdf_result.get("text") or "")
+            if text:
+                lines.append("text_preview:")
+                lines.append(text[:4000])
 
         instructions = str(payload.get("instructions") or "")
         if instructions:
@@ -1021,8 +1226,21 @@ class BasicLangChainAgent:
         if skill_name.lower().split(":")[-1] != "pdf":
             return False
         wants_check = any(word in task.lower() for word in ("检查", "审查", "查看", "inspect", "review", "check"))
-        has_pdf_path = re.search(r"(?i)(?:[A-Za-z]:[\\/]|\.{0,2}[\\/]|/)?[^\s，。；;]+\.pdf\b", task) is not None
+        has_pdf_path = BasicLangChainAgent._extract_pdf_path_from_task(task) is not None
         return wants_check and not has_pdf_path
+
+    @staticmethod
+    def _extract_pdf_path_from_task(task: str) -> Optional[str]:
+        quoted = re.search(r'["“]([^"”]+?\.pdf)["”]', task, flags=re.IGNORECASE)
+        if quoted:
+            return quoted.group(1).strip()
+        match = re.search(
+            r"(?i)([A-Za-z]:[^\s，。；;]+?\.pdf|(?:\.{1,2}[\\/]|[\\/])?[^\s，。；;]+?\.pdf)",
+            task,
+        )
+        if match:
+            return match.group(1).strip()
+        return None
 
     def _skill_contexts_for_task(self, task: str) -> List[Dict[str, Any]]:
         if not self.config.enable_skill_context:
