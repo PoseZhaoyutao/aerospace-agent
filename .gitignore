@@ -7,6 +7,8 @@ __pycache__/
 /data/offload/
 /reports/*.html
 /demo_outputs/*.png
+/demo_output/
+/.test_runs/
 
 # 环境与密钥
 .env

@@ -176,7 +176,7 @@ class AppState:
     """
     # 运行控制
     running: bool = True
-    mode: str = "fast"         # fast | ceo | react | chat
+    mode: str = "langchain"    # langchain | fast | ceo | react | chat
     stream: bool = True         # 流式输出开关
     # 对话历史
     messages: List[Dict[str, str]] = field(default_factory=list)
@@ -360,17 +360,17 @@ class CEOEngine:
         return blueprint
 
     # ------------------------------------------------------------------
-    # Phase B: 无限步长 ReAct 循环
+    # Phase B: 受控步长 ReAct 循环
     # ------------------------------------------------------------------
 
     def run_phase_b(self, task: str) -> str:
-        """CEO Phase B：基于蓝图的无限步长循环。
+        """CEO Phase B：基于蓝图的受控步长循环。
 
         委托 AerospaceAgent.run_react_stream() 执行,集成上下文管理+记忆+智能工具执行。
         保留流式输出与 Ctrl+C 中断能力。
         """
         self.console.print(Panel(
-            f"[bold blue]Phase B：无限步长执行循环[/bold blue]\n"
+            f"[bold blue]Phase B：受控步长执行循环[/bold blue]\n"
             f"[dim]委托 Agent 统一 ReAct 入口,集成上下文/记忆/蓝图[/dim]",
             border_style="blue",
         ))
@@ -389,10 +389,11 @@ class CEOEngine:
 
         # 委托 Agent 执行统一 ReAct 循环
         try:
+            max_steps = int(os.environ.get("AEROSPACE_REACT_MAX_STEPS", "20"))
             result = self.agent.run_react_stream(
                 task=task,
                 blueprint=self.blueprint,
-                max_steps=9999,
+                max_steps=max_steps,
                 stream_callback=_stream_cb if self.stream else None,
                 enable_context=True,
             )
@@ -464,9 +465,17 @@ class CEOEngine:
     def execute(self, task: str) -> str:
         """根据当前模式执行任务。"""
         self.stats.begin()
+        max_steps = int(os.environ.get("AEROSPACE_REACT_MAX_STEPS", "20"))
 
         if self.mode == "chat":
             result = self.run_chat(task)
+        elif self.mode == "langchain":
+            # LangChain 基础入口：少工具、单次调用、确定性文件任务直执行
+            result = self.agent.run_langchain_react(
+                task,
+                max_steps=max_steps,
+                stream_callback=lambda chunk: sys.stdout.write(chunk) if self.stream else None,
+            )
         elif self.mode == "fast":
             # 快速模式：QueryEngine 驱动（1:1 复刻 CCB 架构）
             # 回退到 run_fast（工作流匹配 + 精简 ReAct）
@@ -715,6 +724,7 @@ class CLITerminal:
             "ceo": "CEO 模式（第一性原理 + Top-K + 无限步长）",
             "react": "ReAct 模式（跳过分析，直接循环）",
             "chat": "聊天模式（纯流式对话）",
+            "langchain": "LangChain 基础模式（少工具、短上下文、非递归）",
         }
         self._view_header_banner(mode_desc)
 
@@ -799,22 +809,23 @@ class CLITerminal:
         elif command == "/mode":
             if len(parts) > 1:
                 m = parts[1].strip().lower()
-                if m in ("fast", "ceo", "react", "chat"):
+                if m in ("fast", "ceo", "react", "chat", "langchain"):
                     self.state = update(
                         Msg(MsgType.MODE_CHANGE, {"mode": m}), self.state)
                     desc = {"fast": "快速模式（优先工作流直执行，回退精简ReAct）",
                             "ceo": "CEO 模式（第一性原理 + Top-K + 无限步长）",
                             "react": "ReAct 模式（跳过分析，直接循环）",
-                            "chat": "聊天模式（纯流式对话）"}
+                            "chat": "聊天模式（纯流式对话）",
+                            "langchain": "LangChain 基础模式（少工具、短上下文、非递归）"}
                     self.console.print(
                         f"[green]OK 模式切换: {desc[m]}[/green]")
                 else:
                     self.console.print(
-                        f"[red]未知模式: {m}（可选: fast/ceo/react/chat）[/red]")
+                        f"[red]未知模式: {m}（可选: fast/ceo/react/chat/langchain）[/red]")
             else:
                 self.console.print(
                     f"[cyan]当前模式: {self.state.mode}[/cyan]\n"
-                    f"[dim]可选: fast / ceo / react / chat[/dim]")
+                    f"[dim]可选: fast / ceo / react / chat / langchain[/dim]")
 
         elif command == "/stream":
             self.state = update(Msg(MsgType.STREAM_TOGGLE), self.state)
@@ -845,7 +856,7 @@ class CLITerminal:
         t = Table(title="命令", show_header=True, box=box.ROUNDED)
         t.add_column("命令", style="cyan", width=12)
         t.add_column("说明", style="white")
-        for c, d in [("/help", "显示帮助"), ("/mode", "切换模式 (fast/ceo/react/chat)"),
+        for c, d in [("/help", "显示帮助"), ("/mode", "切换模式 (fast/ceo/react/chat/langchain)"),
                      ("/stream", "切换流式输出 (开/关)"),
                      ("/perm", "文件夹权限 (ask/auto/none)"),
                      ("/tools", "工具列表"),

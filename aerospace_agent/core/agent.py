@@ -19,6 +19,7 @@ import ast
 import json
 import logging
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -235,6 +236,19 @@ class AerospaceAgent:
         self.rag: Optional[SimpleRAG] = None
         # K5-H1: 初始化 system_prompt 属性，防止非工厂构造时 AttributeError
         self.system_prompt: Optional[str] = None
+        # 上下文窗口管理：token 预算与工具结果截断
+        # max_context_tokens: 模型上下文窗口大小（默认 8192，适配大多数本地 vLLM 部署）
+        #   可通过环境变量 AEROSPACE_MAX_CONTEXT_TOKENS 覆盖
+        # max_output_tokens: LLM 单次输出最大 token 数（默认 1024，给 prompt 留空间）
+        #   可通过环境变量 AEROSPACE_MAX_OUTPUT_TOKENS 覆盖
+        # tool_result_max_chars: 单条工具结果最大字符数，超出则首尾截断
+        self.max_context_tokens: int = int(
+            os.environ.get("AEROSPACE_MAX_CONTEXT_TOKENS", 8192)
+        )
+        self.max_output_tokens: int = int(
+            os.environ.get("AEROSPACE_MAX_OUTPUT_TOKENS", 1024)
+        )
+        self.tool_result_max_chars: int = 4000
 
     # ------------------------------------------------------------------
     # 注册
@@ -278,19 +292,21 @@ class AerospaceAgent:
     @staticmethod
     def _parse_action(text: str) -> Optional[Dict[str, Any]]:
         """从 LLM 输出中解析 Action / Action Input。"""
-        action_match = re.search(r"Action:\s*(.+)", text)
-        if not action_match:
+        action_blocks = list(
+            re.finditer(
+                r"Action:\s*(?P<tool>[^\r\n]+)(?P<body>.*?)(?=(?:\n\s*Action:\s*)|\Z)",
+                text,
+                re.DOTALL,
+            )
+        )
+        if not action_blocks:
             return None
-        tool_name = action_match.group(1).strip()
-        input_match = re.search(r"Action Input:\s*(.+)", text)
+
+        block = action_blocks[-1]
+        tool_name = block.group("tool").strip()
+        input_match = re.search(r"Action Input:\s*(.+)", block.group("body"), re.DOTALL)
         raw_input = input_match.group(1).strip() if input_match else "{}"
-        # 尝试解析为 JSON；失败则把整段作为 input 参数
-        try:
-            args = json.loads(raw_input)
-            if not isinstance(args, dict):
-                args = {"input": args}
-        except json.JSONDecodeError:
-            args = {"input": raw_input}
+        args = AerospaceAgent._parse_action_input(raw_input)
         return {"tool": tool_name, "args": args}
 
     @staticmethod
@@ -334,15 +350,26 @@ class AerospaceAgent:
         """执行指定工具（原生 Tool 或 MCP BaseTool），返回结果字符串。
 
         统一入口：原生工具直接调用，MCP 工具走智能参数适配。
+        错误返回使用 [TOOL ERROR] 前缀，便于 LLM 识别并换策略。
         """
+        available = list(self.tools.keys()) + list(self.mcp_tools.keys())
+
         # 原生工具
         tool = self.tools.get(tool_name)
         if tool is not None:
             try:
                 result = tool(**args) if isinstance(args, dict) else tool(input=args)
                 return str(result)
+            except TypeError as e:
+                return (
+                    f"[TOOL ERROR] 工具 '{tool_name}' 参数错误: {e}\n"
+                    f"提示: 请检查参数名和类型，或调用 list_tools 查看 '{tool_name}' 的正确参数。"
+                )
             except Exception as e:
-                return f"工具执行错误: {e}"
+                return (
+                    f"[TOOL ERROR] 工具 '{tool_name}' 执行异常: {e}\n"
+                    f"提示: 如再次失败，请换用其他工具或调用 list_tools。"
+                )
         # MCP 工具（BaseTool.call(method, **kwargs) 接口）
         bt = self.mcp_tools.get(tool_name)
         if bt is not None:
@@ -351,21 +378,175 @@ class AerospaceAgent:
             # 智能选择方法 + 参数适配
             method, adapted_kw, hint = self._adapt_mcp_call(bt, args)
             if hint:
-                return hint
+                return (
+                    f"[TOOL ERROR] 工具 '{tool_name}' 参数适配失败: {hint}\n"
+                    f"提示: 请调用 list_tools 查看 '{tool_name}' 的正确用法。"
+                )
             try:
                 res = bt.call(method, **adapted_kw)
                 return json.dumps(res, ensure_ascii=False, default=str)
             except TypeError as e:
                 schema = self._get_method_schema(bt, method)
                 return (
-                    f"MCP 工具执行错误: {e}\n"
+                    f"[TOOL ERROR] 工具 '{tool_name}' 参数错误: {e}\n"
                     f"  方法 '{method}' 期望参数: {schema}\n"
-                    f"  实际传入: {list(adapted_kw.keys())}"
+                    f"  实际传入: {list(adapted_kw.keys())}\n"
+                    f"提示: 请调整参数后重试，或调用 list_tools 查看正确用法。"
                 )
             except Exception as e:
-                return f"MCP 工具执行错误: {e}"
-        available = list(self.tools.keys()) + list(self.mcp_tools.keys())
-        return f"错误：未知工具 '{tool_name}'（可用: {available}）"
+                return (
+                    f"[TOOL ERROR] 工具 '{tool_name}' 执行异常: {e}\n"
+                    f"提示: 如再次失败，请换用其他工具。"
+                )
+        # 未知工具
+        avail_preview = ", ".join(available[:20])
+        if len(available) > 20:
+            avail_preview += f" ...等共 {len(available)} 个工具"
+        return (
+            f"[TOOL ERROR] 工具 '{tool_name}' 不存在。\n"
+            f"可用工具: {avail_preview}\n"
+            f"提示: 请调用 list_tools 查看完整工具列表和参数说明。"
+        )
+
+    # ------------------------------------------------------------------
+    # 上下文窗口管理：token 预算强制执行
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _estimate_messages_tokens(messages: List[Dict]) -> int:
+        """估算消息列表的总 token 数（保守估计，×4/3）。
+
+        使用 rough_token_count（字符数 / 3.5），与 CCB token_estimation 对齐。
+        """
+        from .token_estimation import rough_token_count
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total += rough_token_count(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        total += rough_token_count(block.get("text", "") or block.get("content", "") or "")
+                    else:
+                        total += rough_token_count(str(block))
+            else:
+                total += rough_token_count(str(content))
+        # 保守系数 4/3（与 CCB 一致）
+        return int(total * 4.0 / 3.0)
+
+    def _enforce_token_budget(
+        self,
+        messages: List[Dict],
+        max_tokens: Optional[int] = None,
+    ) -> List[Dict]:
+        """强制执行 token 预算——超限时渐进式压缩消息列表。
+
+        三级策略（按破坏性从低到高）：
+          Phase 1: 清除旧 Observation 中的工具结果内容（保留最近 3 条）
+          Phase 2: 截断过长的单条消息（超过 ~2000 token 的）
+          Phase 3: 丢弃最旧的非系统消息（保留最近 6 条）
+
+        硬性保证：system 消息永不丢弃（包含任务规格、Essential 层）。
+        """
+        max_tokens = max_tokens or self.max_context_tokens
+        # safe_budget = 总窗口 - LLM 输出预留，确保 prompt + completion <= 窗口
+        safe_budget = max(512, max_tokens - self.max_output_tokens)
+
+        current = self._estimate_messages_tokens(messages)
+        if current <= safe_budget:
+            return messages
+
+        # 分离 system 和非 system 消息
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        # Phase 1: 清除旧 Observation / tool 结果内容（保留最近 2 条）
+        obs_indices = [
+            i for i, m in enumerate(non_system)
+            if "Observation:" in m.get("content", "") or m.get("role") == "tool"
+        ]
+        if len(obs_indices) > 2:
+            for i in obs_indices[:-2]:
+                non_system[i] = {
+                    **non_system[i],
+                    "content": "[旧工具结果已清除以节省上下文空间]",
+                }
+
+        current = self._estimate_messages_tokens(system_msgs + non_system)
+        if current <= safe_budget:
+            return system_msgs + non_system
+
+        # Phase 2: 截断过长的单条消息（> 7000 字符 ≈ 2000 token）
+        for i, m in enumerate(non_system):
+            content = m.get("content", "")
+            if isinstance(content, str) and len(content) > 7000:
+                non_system[i] = {
+                    **m,
+                    "content": content[:7000]
+                    + f"\n...[已截断，原长度 {len(content)} 字符]...",
+                }
+
+        current = self._estimate_messages_tokens(system_msgs + non_system)
+        if current <= safe_budget:
+            return system_msgs + non_system
+
+        # Phase 3: 丢弃最旧的非系统消息（保留最近 6 条 = 3 轮对话）
+        min_keep = 6
+        while (
+            len(non_system) > min_keep
+            and self._estimate_messages_tokens(system_msgs + non_system) > safe_budget
+        ):
+            non_system.pop(0)
+
+        # Phase 4: 仍然超标——截断剩余消息中最大的 Observation 到 500 字符
+        current = self._estimate_messages_tokens(system_msgs + non_system)
+        if current > safe_budget:
+            for i, m in enumerate(non_system):
+                content = m.get("content", "")
+                if isinstance(content, str) and "Observation:" in content and len(content) > 500:
+                    non_system[i] = {
+                        **m,
+                        "content": content[:500] + "...[紧急截断]",
+                    }
+
+        # 如果删除后第一条是 assistant，插入 user 占位符保持角色交替
+        if non_system and non_system[0].get("role") == "assistant":
+            non_system.insert(0, {"role": "user", "content": "[更早的对话已压缩]"})
+
+        return system_msgs + non_system
+
+    @staticmethod
+    def _truncate_tool_result(result: Any, max_chars: int = 4000) -> str:
+        """截断过长的工具结果，保留首尾摘要。
+
+        策略：保留前 60% 和后 20%，中间用省略标记。
+        """
+        if not isinstance(result, str):
+            try:
+                result = json.dumps(result, ensure_ascii=False, default=str)
+            except Exception:
+                result = str(result)
+        if len(result) <= max_chars:
+            return result
+        head_size = int(max_chars * 0.6)
+        tail_size = int(max_chars * 0.2)
+        return (
+            result[:head_size]
+            + f"\n...[已截断 {len(result) - head_size - tail_size} 字符]...\n"
+            + result[-tail_size:]
+        )
+
+    @staticmethod
+    def _is_context_length_error(exc: Exception) -> bool:
+        """判断异常是否为上下文长度超限导致的请求失败。"""
+        msg = str(exc).lower()
+        return any(kw in msg for kw in (
+            "400", "bad request", "context length", "too long",
+            "maximum context", "token limit", "prompt is too long",
+            "request too large", "payload too large",
+            "exceeds the available context size", "exceeds context",
+            "context size", "max tokens", "exceeds",
+        ))
 
     # ------------------------------------------------------------------
     # 智能参数适配 (从 CEOEngine 迁移,统一工具执行入口)
@@ -377,6 +558,14 @@ class AerospaceAgent:
         策略链：JSON → ast.literal_eval → 安全 eval → 回退。
         """
         raw = raw.strip()
+        decoder = json.JSONDecoder()
+        try:
+            result, _ = decoder.raw_decode(raw)
+            if isinstance(result, dict):
+                return result
+            return {"input": result}
+        except (json.JSONDecodeError, ValueError):
+            pass
         try:
             result = json.loads(raw)
             if isinstance(result, dict):
@@ -405,6 +594,15 @@ class AerospaceAgent:
         except Exception:
             pass
         return {"input": raw}
+
+    @staticmethod
+    def _action_signature(tool_name: str, args: Any) -> str:
+        """Build a stable signature for repeated-action detection."""
+        try:
+            args_text = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:
+            args_text = str(args)
+        return f"{tool_name}:{args_text}"
 
     @staticmethod
     def _get_method_schema(bt, method: str) -> str:
@@ -584,11 +782,25 @@ class AerospaceAgent:
             if observation:
                 messages.append({"role": "user", "content": observation})
 
+            # Token 预算强制执行——防止上下文窗口溢出
+            messages = self._enforce_token_budget(messages)
+
             try:
                 response = self.llm.chat(messages)
             except Exception as e:
-                print(f"[LLM 调用失败] {e}")
-                return f"任务失败：LLM 调用异常 - {e}"
+                # 上下文超长：压缩后重试一次
+                if self._is_context_length_error(e):
+                    messages = self._enforce_token_budget(
+                        messages, max_tokens=int(self.max_context_tokens * 0.6)
+                    )
+                    try:
+                        response = self.llm.chat(messages)
+                    except Exception as e2:
+                        print(f"[LLM 调用失败(重试后)] {e2}")
+                        return f"任务失败：LLM 调用异常 - {e2}"
+                else:
+                    print(f"[LLM 调用失败] {e}")
+                    return f"任务失败：LLM 调用异常 - {e}"
 
             # 打印思考（截断过长输出）
             preview = response if len(response) <= 500 else response[:500] + " ..."
@@ -620,6 +832,7 @@ class AerospaceAgent:
             args = action["args"]
             print(f"[Action] 调用工具: {tool_name}, 参数: {args}")
             result = self._execute_tool(tool_name, args)
+            result = self._truncate_tool_result(result, self.tool_result_max_chars)
             print(f"[Observation] {result}")
             self.context_manager.add_tool_record(tool_name, args, result)
             self.short_memory.add("tool", result)
@@ -714,6 +927,51 @@ class AerospaceAgent:
                     lines.append(f"  - {k}: {v}")
             return "\n".join(lines)
         return str(result)
+
+    # ------------------------------------------------------------------
+    # LangChain Agent 循环 —— 基于 langchain-core 的标准化 ReAct
+    # ------------------------------------------------------------------
+    def run_langchain_react(
+        self,
+        task: str,
+        max_steps: int = 20,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        system_prompt: Optional[str] = None,
+    ) -> str:
+        """Run the minimal LangChain-oriented agent entrypoint.
+
+        The old implementation tried to rebuild a full ReAct executor on top of
+        langchain-core. That path is now legacy for the basic framework stage:
+        basic tasks must not enter a recursive tool loop. This method keeps the
+        public name stable while delegating to BasicLangChainAgent.
+        """
+        try:
+            from ..langchain_agent import BasicAgentConfig, create_basic_langchain_agent
+        except Exception as exc:
+            return f"LangChain 基础入口加载失败: {exc}"
+
+        config = BasicAgentConfig(max_output_tokens=self.max_output_tokens)
+        agent = create_basic_langchain_agent(
+            llm=self.llm,
+            workspace=Path.cwd(),
+            config=config,
+        )
+        result = agent.invoke(task)
+        text = result.to_text()
+
+        if stream_callback:
+            try:
+                stream_callback(text)
+            except Exception:
+                pass
+
+        if result.ok:
+            try:
+                self._persist_memory(task, text)
+            except Exception:
+                pass
+
+        return text
 
     def run_react_fast(self, task: str, max_steps: int = 6) -> str:
         """精简 ReAct 循环——去除重上下文管理/记忆/指标开销，专注快速推理。
@@ -829,12 +1087,16 @@ class AerospaceAgent:
 
             print(f"  [Action] {tool_name}, 参数: {args}")
             result = self._execute_tool(tool_name, args)
+            result = self._truncate_tool_result(result, self.tool_result_max_chars)
             print(f"  [Observation] {str(result)[:200]}")
             observation = f"Observation: {result}"
 
-            # 错误时注入提示
-            if "错误" in result or "error" in result.lower():
-                observation += "\n提示: 请调整参数或换用其他工具。"
+            # 错误时注入强化提示——与 run_react_stream 对齐
+            if "错误" in result or "error" in result.lower() or "[TOOL ERROR]" in result:
+                observation += (
+                    "\n[系统提示] 工具调用失败。"
+                    "你必须换用其他工具或调整参数，不得重复调用同一错误工具。"
+                )
 
         print(f"  [达到最大步数 {max_steps}]")
         return f"已达到最大推理步数({max_steps})，未得出最终答案。"
@@ -1161,7 +1423,7 @@ class AerospaceAgent:
         self,
         task: str,
         blueprint: Optional[Dict] = None,
-        max_steps: int = 9999,
+        max_steps: int = 20,
         stream_callback: Optional[Callable[[str], None]] = None,
         enable_context: bool = True,
     ) -> str:
@@ -1173,7 +1435,7 @@ class AerospaceAgent:
         Args:
             task: 用户任务描述
             blueprint: Phase A 产出的 v1 蓝图 (可选)
-            max_steps: 最大推理步数 (默认 9999,仅硬停)
+            max_steps: 最大推理步数 (默认 20,防止坏循环无限扩散)
             stream_callback: 流式输出回调 (chunk -> None)
             enable_context: 是否启用上下文管理 (测试可关闭)
 
@@ -1243,34 +1505,68 @@ class AerospaceAgent:
 
         # --- ReAct 循环 ---
         consecutive_errors = 0
-        max_consecutive_errors = 7
+        max_consecutive_errors = 2
+        repeated_actions: Dict[str, int] = {}
+        max_repeated_actions = 2
 
         for step in range(1, max_steps + 1):
             _steps_used = step
             # 检查上下文是否需要压缩
             if enable_context:
                 action = self.context_manager.decide_action()
-                # K5-H3: 修复条件写反——auto_offload_large_results 是 Offload 操作
-                # 应在 "offload" 或 "both" 时触发，而非 "compress"/"both"
+                # K5-H3: offload 在 "offload" 或 "both" 时触发
                 if action in ("offload", "both"):
                     self.context_manager.auto_offload_large_results()
+                # 修复：compress 分支原来空操作——现在实际执行压缩
+                if action in ("compress", "both"):
+                    self.context_manager.clear_compressed()
 
-            # K2 修复：messages 随上下文管理同步截断
-            # 当 messages 超过阈值时，保留 system + 最近 N 条，防止 LLM 上下文窗口溢出
-            max_context_messages = 50
-            if len(messages) > max_context_messages:
-                system_msgs = [m for m in messages if m.get("role") == "system"]
-                non_system = [m for m in messages if m.get("role") != "system"]
-                keep = max_context_messages - len(system_msgs)
-                before = len(messages)
-                messages = system_msgs + non_system[-keep:]
-                log.info("context_truncated",
-                         data={"before": before,
-                               "after": len(messages), "step": step})
+            # Token 预算强制执行——替代原来的条数截断
+            # 渐进式三级压缩：清除旧工具结果 → 截断长消息 → 丢弃最旧消息
+            pre_tokens = self._estimate_messages_tokens(messages)
+            messages = self._enforce_token_budget(messages)
+            post_tokens = self._estimate_messages_tokens(messages)
+            if post_tokens < pre_tokens:
+                log.info("context_compacted",
+                         data={"before_tokens": pre_tokens,
+                               "after_tokens": post_tokens, "step": step})
 
-            # 流式获取 LLM 响应
-            with metrics.timer("llm_latency", tags={"model": getattr(self.llm, "model", "unknown")}):
-                response = self._stream_llm_response(messages, stream_callback)
+            # 流式获取 LLM 响应（含上下文超长重试）
+            response = None
+            for _retry in range(2):  # 最多重试 1 次
+                try:
+                    with metrics.timer("llm_latency", tags={"model": getattr(self.llm, "model", "unknown")}):
+                        response = self._stream_llm_response(messages, stream_callback)
+                    break
+                except Exception as exc:
+                    if _retry == 0 and self._is_context_length_error(exc):
+                        # 上下文超长：激进压缩后重试
+                        log.info("context_length_retry", data={"step": step, "error": str(exc)[:300]})
+                        messages = self._enforce_token_budget(
+                            messages, max_tokens=int(self.max_context_tokens * 0.6)
+                        )
+                        continue
+                    # 非上下文超长错误，或重试后仍失败——终止
+                    log.info("react_stream_llm_error", data={"step": step, "error": str(exc)[:500]})
+                    metrics.gauge("react_steps", _steps_used)
+                    # 增强错误诊断：上下文超长时给出可操作建议
+                    err_detail = str(exc)
+                    if self._is_context_length_error(exc):
+                        err_detail += (
+                            "\n\n【诊断】后端上下文窗口过小，请求 token 数超过模型限制。"
+                            "\n建议:"
+                            "\n  1. 启动 vLLM 时增加 --max-model-len 8192 (或更大)"
+                            "\n  2. 或设置环境变量 AEROSPACE_MAX_CONTEXT_TOKENS=4096 以适配当前窗口"
+                            "\n  3. 或设置 AEROSPACE_MAX_OUTPUT_TOKENS=512 减小输出预留"
+                        )
+                    return (
+                        f"LLM 调用失败,终止推理。\n"
+                        f"步骤: {step}/{max_steps}\n"
+                        f"错误: {err_detail}\n"
+                        f"已保留上下文与工具记录,请检查模型服务请求限制、上下文长度或服务端日志。"
+                    )
+            if response is None:
+                response = ""
             metrics.inc("llm_calls")
 
             if not response.strip():
@@ -1285,8 +1581,6 @@ class AerospaceAgent:
             self.short_memory.add("assistant", response)
             if enable_context:
                 self.context_manager.add_message("assistant", response)
-
-            consecutive_errors = 0  # 重置错误计数
 
             # 解析 Final Answer
             final = self._parse_final_answer(response)
@@ -1326,6 +1620,21 @@ class AerospaceAgent:
             if isinstance(args, str):
                 args = self._parse_action_input(args)
 
+            action_signature = self._action_signature(tool_name, args)
+            repeated_actions[action_signature] = repeated_actions.get(action_signature, 0) + 1
+            if repeated_actions[action_signature] >= max_repeated_actions:
+                log.info(
+                    "react_stream_repeated_action_abort",
+                    data={"tool": tool_name, "step": step, "repeat": repeated_actions[action_signature]},
+                )
+                metrics.gauge("react_steps", _steps_used)
+                return (
+                    f"重复工具调用 {repeated_actions[action_signature]} 次,终止推理。\n"
+                    f"工具: {tool_name}\n"
+                    f"参数: {args}\n"
+                    "判定: 模型在重复同一 Action,没有消费 Observation 或改变策略。"
+                )
+
             # 执行工具
             try:
                 with metrics.timer("tool_latency", tags={"tool": tool_name}):
@@ -1351,23 +1660,31 @@ class AerospaceAgent:
                 except Exception:
                     pass
 
-            # 构建 Observation
+            # 构建 Observation（工具结果截断后追加，防止单条消息撑爆上下文）
+            result = self._truncate_tool_result(result, self.tool_result_max_chars)
             obs = f"Observation: {result}"
             messages.append({"role": "assistant", "content": response})
             messages.append({"role": "user", "content": obs})
 
-            # 错误恢复
-            if "错误" in result or "error" in result.lower():
+            # 错误恢复：强化 Observation，让 LLM 明确知道必须换策略
+            if "错误" in result or "error" in result.lower() or "[TOOL ERROR]" in result:
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     log.info("react_stream_end", data={"steps": _steps_used, "result_length": len(result) if result else 0})
                     metrics.gauge("react_steps", _steps_used)
-                    return f"连续 {max_consecutive_errors} 次工具错误,终止推理。\n最后结果: {result}"
-                # 注入错误提示
-                messages.append({
-                    "role": "user",
-                    "content": f"提示: 上一步出现错误({result[:200]}),请尝试调整参数或换用其他工具。"
-                })
+                    return (
+                        f"连续 {max_consecutive_errors} 次工具错误,终止推理。\n"
+                        f"最后结果: {result}\n"
+                        f"建议: 请检查工具名和参数是否正确，或调用 list_tools 查看可用工具。"
+                    )
+                # 注入强化错误提示——不截断，完整传递错误信息
+                error_hint = (
+                    f"[系统提示] 上一步工具调用失败，这是第 {consecutive_errors} 次失败。\n"
+                    f"错误详情:\n{result}\n\n"
+                    f"你必须立即换用其他工具或调整参数。"
+                    f"如果同一工具再次失败，推理将被强制终止。"
+                )
+                messages.append({"role": "user", "content": error_hint})
             else:
                 consecutive_errors = 0
 

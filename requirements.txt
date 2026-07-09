@@ -14,7 +14,8 @@ prompt_toolkit
 pytest
 pytest-cov
 
-# 可选依赖（未安装时自动回退到内置实现）
+# LangChain Agent 层（基于 langchain-core 的标准化 ReAct 循环）
+langchain-core
 # rich            # 彩色终端输出（未装时回退到 print）
 # openai          # 真实 LLM 调用（已内置标准库实现，无需强制安装）
 # mcp             # MCP Server 协议库（仅独立运行 MCP Server 时需要）

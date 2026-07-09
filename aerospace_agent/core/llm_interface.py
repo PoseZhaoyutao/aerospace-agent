@@ -329,8 +329,11 @@ class LocalLLM(LLMInterface):
             "messages": messages,
             "temperature": kwargs.get("temperature", 0.3),
         }
-        # 默认 max_tokens 增大到 4096（thinking 模型需要更多空间）
-        max_tokens = kwargs.get("max_tokens", 4096)
+        # 默认 max_tokens：本地部署窗口通常较小，默认 1024 给 prompt 留空间
+        # 可通过 kwargs 或环境变量 AEROSPACE_MAX_OUTPUT_TOKENS 覆盖
+        import os as _os
+        _default_out = int(_os.environ.get("AEROSPACE_MAX_OUTPUT_TOKENS", 1024))
+        max_tokens = kwargs.get("max_tokens", _default_out)
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
