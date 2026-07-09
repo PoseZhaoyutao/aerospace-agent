@@ -22,7 +22,7 @@ from .vector_store import VectorStore
 
 __all__ = ["AerospaceKnowledgeBase"]
 
-DEFAULT_DATA_DIR = "/workspace/data"
+DEFAULT_DATA_DIR = os.path.join(os.getcwd(), "data")
 
 
 class AerospaceKnowledgeBase:

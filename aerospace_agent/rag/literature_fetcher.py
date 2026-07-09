@@ -31,6 +31,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from aerospace_agent.local_runtime import run_command
+
 __all__ = [
     "Paper",
     "CSTCloudAuthenticator",
@@ -41,7 +43,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # 默认配置
 # ---------------------------------------------------------------------------
-DEFAULT_PAPER_DIR = "/workspace/data/papers"
+DEFAULT_PAPER_DIR = os.path.join(os.getcwd(), "data", "papers")
 
 # arXiv API 基址
 ARXIV_API_URL = "http://export.arxiv.org/api/query"
@@ -211,9 +213,7 @@ class CSTCloudAuthenticator:
         (可能使用 AEROSPACE_LLM_API_KEY 或 MockLLM)。
         """
         # 延迟导入避免循环依赖
-        import sys
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from core.llm_interface import OpenAICompatibleLLM, create_llm
+        from ..core.llm_interface import OpenAICompatibleLLM, create_llm
 
         if self._authenticated and self.api_key:
             return OpenAICompatibleLLM(
@@ -632,13 +632,11 @@ def _extract_with_fitz(pdf_path: str, max_chars: int) -> str:
 def _extract_with_pdftotext(pdf_path: str, max_chars: int) -> str:
     """使用 pdftotext 命令行工具提取文本。"""
     try:
-        result = subprocess.run(
+        result = run_command(
             ["pdftotext", "-q", pdf_path, "-"],
-            capture_output=True,
-            text=True,
             timeout=60,
         )
-        if result.returncode == 0 and result.stdout:
+        if result.ok and result.stdout:
             return result.stdout[:max_chars]
     except FileNotFoundError:
         pass

@@ -22,12 +22,16 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .keyword_index import KeywordIndex
 from .knowledge_graph import KnowledgeGraph
 from .vector_store import VectorStore
+
+# 模块级日志器：检索降级路径异常告警（替代静默 except）
+_logger = logging.getLogger(__name__)
 
 __all__ = ["RetrievalResult", "HybridRetriever"]
 
@@ -155,9 +159,31 @@ class HybridRetriever:
         w_vec, w_kw, w_graph = weights
         fetch_k = max(top_k * 3, 12)
 
-        vec_c = self._max_normalize(self._vector_candidates(query, fetch_k))
-        kw_c = self._max_normalize(self._keyword_candidates(query, fetch_k))
-        graph_c = self._max_normalize(self._graph_candidates(query, fetch_k))
+        # 三路检索——各自独立 try/except，单路失败不影响其他路（降级策略）
+        vec_c, kw_c, graph_c = [], [], []
+        failed_paths = []
+
+        try:
+            vec_c = self._max_normalize(self._vector_candidates(query, fetch_k))
+        except Exception as exc:
+            _logger.warning("向量检索路失败，降级跳过: %s", exc)
+            failed_paths.append("vector")
+
+        try:
+            kw_c = self._max_normalize(self._keyword_candidates(query, fetch_k))
+        except Exception as exc:
+            _logger.warning("关键词检索路失败，降级跳过: %s", exc)
+            failed_paths.append("keyword")
+
+        try:
+            graph_c = self._max_normalize(self._graph_candidates(query, fetch_k))
+        except Exception as exc:
+            _logger.warning("图谱检索路失败，降级跳过: %s", exc)
+            failed_paths.append("graph")
+
+        # 如果全部失败，返回空列表
+        if not vec_c and not kw_c and not graph_c:
+            return []
 
         # 按「归一化文本」去重合并: key -> {score, sources, meta, text, explanation}
         merged: Dict[str, dict] = {}

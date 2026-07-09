@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 
 try:
@@ -59,7 +60,7 @@ def log(msg, style=None):
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, default=False, help="详细输出")
 @click.option("--quiet", "-q", is_flag=True, default=False, help="静默输出")
-@click.version_option(version="0.1.0", prog_name="aerospace-agent")
+@click.version_option(version="0.7.0", prog_name="aerospace-agent")
 @click.pass_context
 def cli(ctx, verbose, quiet):
     """航天导航控制 Agent 命令行工具。"""
@@ -293,7 +294,7 @@ def rag_literature(query, topic, max_results, no_download, report):
 
 
 @rag.command("cloud")
-@click.option("--output", "-o", default="/workspace/reports/knowledge_cloud.html", show_default=True, help="输出路径")
+@click.option("--output", "-o", default=os.path.join(os.getcwd(), "reports", "knowledge_cloud.html"), show_default=True, help="输出路径")
 def rag_cloud(output):
     """生成动态知识云图（力导向交互式 HTML）。"""
     from .rag.aerospace_rag import AerospaceRAG
@@ -307,7 +308,7 @@ def rag_cloud(output):
 
 
 @rag.command("report")
-@click.option("--output", "-o", default="/workspace/reports/knowledge_learning_report.html", show_default=True, help="输出路径")
+@click.option("--output", "-o", default=os.path.join(os.getcwd(), "reports", "knowledge_learning_report.html"), show_default=True, help="输出路径")
 def rag_report(output):
     """生成知识学习报告（概念网络分析 + 论文写作辅助）。"""
     from .rag.aerospace_rag import AerospaceRAG
@@ -315,6 +316,65 @@ def rag_report(output):
     rag_obj = AerospaceRAG()
     path = rag_obj.generate_knowledge_report(output_path=output)
     cprint(f"知识学习报告已生成: {path}", style="bold green")
+
+
+# ----------------------------------------------------------------------
+# experiment
+# ----------------------------------------------------------------------
+@cli.group()
+def experiment():
+    """Evidence-backed local experiment runs."""
+    pass
+
+
+@experiment.command("run")
+@click.argument("task", required=False)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="YAML config file to reproduce or override a run.",
+)
+@click.option(
+    "--output-dir",
+    default=os.path.join("data", "runs"),
+    show_default=True,
+    help="Directory where run_id folders are created.",
+)
+@click.option("--duration-s", type=float, default=None, help="Propagation duration in seconds.")
+@click.option("--output-step-s", type=float, default=None, help="State output step in seconds.")
+def experiment_run(task, config_path, output_dir, duration_s, output_step_s):
+    """Run the minimal orbit closed loop."""
+    from .experiment_runtime import load_config_file, run_minimal_orbit_experiment
+
+    config = load_config_file(config_path) if config_path else {}
+    task_text = task or config.get("task")
+    if not task_text:
+        raise click.UsageError("Provide TASK or a config.yaml with a task field.")
+
+    if duration_s is not None:
+        config["duration_s"] = duration_s
+    if output_step_s is not None:
+        config["output_step_s"] = output_step_s
+
+    result = run_minimal_orbit_experiment(
+        task=task_text,
+        output_root=output_dir,
+        config=config,
+    )
+    cprint("===== experiment result =====", style="bold green")
+    cprint(f"status: {result['status']}", style="green")
+    cprint(f"run_id: {result['run_id']}", style="green")
+    cprint(f"run_dir: {result['run_dir']}", style="green")
+    cprint(f"report: {result['report_path']}", style="green")
+    cprint(f"reproduce: {result['artifacts'].get('reproduce_path')}", style="green")
+    if result.get("risks"):
+        cprint(f"risks: {len(result['risks'])}", style="yellow")
+    if result.get("failures"):
+        for failure in result["failures"]:
+            cprint(f"failure: {failure}", style="red")
+        sys.exit(1)
 
 
 # ----------------------------------------------------------------------
@@ -454,6 +514,18 @@ def shell():
             cprint(result, style="green")
         except Exception as e:
             cprint(f"执行出错: {e}", style="red")
+
+
+# ----------------------------------------------------------------------
+# tui
+# ----------------------------------------------------------------------
+@cli.command()
+@click.option("--mock/--no-mock", default=True, help="使用 MockLLM（离线模式）")
+@click.option("--local", is_flag=True, default=False, help="使用本地 LLM")
+def tui(mock, local):
+    """启动交互式终端。"""
+    from .cli_tui import CLITerminal
+    CLITerminal(use_mock=mock, use_local=local).run()
 
 
 def main():

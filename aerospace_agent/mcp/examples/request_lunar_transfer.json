@@ -1,0 +1,62 @@
+{
+  "mission": "设计地月转移轨道",
+  "task_type": "maneuver",
+  "departure_orbit": {
+    "epoch": {
+      "value": "2026-01-01T00:00:00",
+      "scale": "UTC",
+      "format": "ISO"
+    },
+    "frame": {
+      "name": "GCRF",
+      "center": "Earth",
+      "realization": "IERS2010"
+    },
+    "representation": "keplerian",
+    "elements": {
+      "a_m": 6678000.0,
+      "e": 0.0,
+      "i_deg": 28.5,
+      "raan_deg": 0.0,
+      "argp_deg": 0.0,
+      "ta_deg": 0.0
+    },
+    "description": "300 km 圆轨道 LEO 停泊轨道"
+  },
+  "target": {
+    "name": "Moon",
+    "mu": 4.902800118e12,
+    "radius": 1737400.0,
+    "soi_radius_m": 6.61e8,
+    "arrival_altitude_m": 100000.0
+  },
+  "transfer_type": "Hohmann",
+  "departure_epoch": {
+    "value": "2026-01-15T00:00:00",
+    "scale": "UTC",
+    "format": "ISO"
+  },
+  "constraints": {
+    "max_velocity_increment_mps": 3200.0,
+    "transfer_time_max_s": 432000.0,
+    "arrival_altitude_m": 100000.0,
+    "launch_window_tolerance_s": 3600.0
+  },
+  "central_body": {
+    "name": "Earth",
+    "mu": 3.986004418e14,
+    "radius": 6378137.0
+  },
+  "outputs_expected": {
+    "transfer_orbit": "OrbitState",
+    "departure_delta_v_mps": "float",
+    "arrival_delta_v_mps": "float",
+    "transfer_time_s": "float"
+  },
+  "units": "SI (m, m/s, s, deg)",
+  "metadata": {
+    "author": "aerospace-agent",
+    "version": "1.0",
+    "tags": ["lunar_transfer", "Hohmann", "maneuver"]
+  }
+}

@@ -77,11 +77,18 @@ class KnowledgeGraph:
 
     # ------------------------------------------------------------------ 边
     def add_edge(self, src: str, dst: str, relation: str, weight: float = 1.0) -> None:
-        """添加有向边 src -[relation]-> dst。"""
+        """添加有向边 src -[relation]-> dst。
+
+        若已存在相同 (dst, relation) 的边则跳过, 避免重复边。
+        """
         if src not in self.nodes or dst not in self.nodes:
             raise KeyError(
                 f"边端点不存在: src={src!r} dst={dst!r}; 请先 add_node"
             )
+        # 去重: 已存在相同 (dst, relation) 的边则跳过
+        existing = self.adj.get(src, {}).get(relation, [])
+        if any(d == dst for d, _w in existing):
+            return
         self.adj[src][relation].append((dst, float(weight)))
         self.radj[dst][relation].append((src, float(weight)))
 

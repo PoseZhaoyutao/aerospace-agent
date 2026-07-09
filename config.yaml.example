@@ -1,0 +1,56 @@
+# =============================================================================
+# aerospace-agent 统一配置文件模板
+# =============================================================================
+# 用法：
+#   1. 复制本文件为 config.yaml：  cp config.yaml.example config.yaml
+#   2. 按需修改各项取值。
+#   3. 在代码中加载：
+#        from aerospace_agent.config import Config
+#        cfg = Config.from_yaml("config.yaml")
+#
+# 优先级（从高到低）：
+#   1. 环境变量     —— 永远覆盖同名配置项（即使本文件已设置）
+#   2. 本文件       —— config.yaml
+#   3. 代码默认值   —— dataclass 字段默认值
+#
+# 每一项行尾的 [ENV: XXX] 表示对应的环境变量名；未标注 [ENV:] 的项
+# 没有专属环境变量，只能在本文件或代码默认值中设置。
+# 字符串留空 ("") 表示使用代码默认值或交由环境变量提供。
+# =============================================================================
+
+# ---- LLM 大语言模型 ----
+llm:
+  api_key: ""                                    # [ENV: AEROSPACE_LLM_API_KEY] 云端 API 密钥；为空则回退 MockLLM
+  base_url: ""                                   # [ENV: AEROSPACE_LLM_BASE_URL] OpenAI 兼容 API 基址（默认 https://api.openai.com/v1）
+  model: ""                                      # [ENV: AEROSPACE_LLM_MODEL] 云端模型名（默认 gpt-3.5-turbo）
+  local_base_url: "http://127.0.0.1:8000/v1"     # [ENV: AEROSPACE_LOCAL_LLM_BASE_URL] 本地推理服务基址
+  local_model: "qwen3-vl"                        # [ENV: AEROSPACE_LOCAL_LLM_MODEL] 本地模型名
+  local_api_key: ""                              # [ENV: AEROSPACE_LOCAL_LLM_API_KEY] 本地服务 API 密钥（通常可空）
+
+# ---- Data 数据与输出目录 ----
+data:
+  data_dir: "data"                               # [ENV: AEROSPACE_DATA_DIR] 数据根目录
+  reports_dir: "reports"                         # 报告输出目录
+  loop_runs_dir: "data/loop_runs"                # 自主循环运行记录目录
+
+# ---- Engine 轨道计算引擎 ----
+engine:
+  gmat_path: ""                                  # [ENV: GMAT_PATH] GMAT 可执行文件/安装路径
+  orekit_data: ""                                # [ENV: OREKIT_DATA] Orekit 物理数据目录
+  spice_kernels: ""                              # [ENV: SPICE_KERNELS] SPICE 内核文件目录
+
+# ---- Safety 安全与许可证 ----
+safety:
+  workspace: ""                                  # [ENV: ASTRO_DYNAMICS_WORKSPACE] 工作空间根目录（路径白名单基准）
+  stk_license: ""                                # [ENV: STK_LICENSE_FILE] STK 许可文件路径
+  stk_install_dir: ""                            # [ENV: STK_INSTALL_DIR] STK 安装目录
+
+# ---- RAG 检索增强 ----
+rag:
+  cstcloud_api_key: ""                           # [ENV: CSTCLOUD_API_KEY] 中国科技云 API 密钥
+  cstcloud_base_url: ""                          # [ENV: CSTCLOUD_BASE_URL] 中国科技云基址（留空用内置默认）
+
+# ---- Observability 可观测性 ----
+observability:
+  log_level: "WARNING"                           # [ENV: AEROSPACE_LOG_LEVEL] 日志级别 DEBUG/INFO/WARNING/ERROR
+  log_json: false                                # [ENV: AEROSPACE_LOG_JSON] 是否输出 JSON 结构化日志 (true/false 或 1/0)

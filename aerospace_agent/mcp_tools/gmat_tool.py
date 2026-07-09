@@ -22,6 +22,8 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 
+from aerospace_agent.local_runtime import run_command
+
 from .base import BaseTool
 
 
@@ -128,11 +130,9 @@ class GmatTool(BaseTool):
         try:
             # GMAT 命令行批处理模式：-b 运行脚本后退出
             cmd = [self._gmat_path, "-b", "-r", script_path]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600
-            )
+            proc = run_command(cmd, timeout=600)
             return {
-                "ok": proc.returncode == 0,
+                "ok": proc.ok,
                 "returncode": proc.returncode,
                 "stdout": proc.stdout[-4000:],
                 "stderr": proc.stderr[-4000:],

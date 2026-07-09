@@ -27,14 +27,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-# 确保能从父包导入
-_RAG_DIR = os.path.dirname(os.path.abspath(__file__))
-_AGENT_DIR = os.path.dirname(_RAG_DIR)
-_WORKSPACE_DIR = os.path.dirname(_AGENT_DIR)
-for _p in (_WORKSPACE_DIR, _AGENT_DIR, _RAG_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
+# 包内相对导入——不再使用 sys.path hack
 try:
     from .literature_fetcher import (
         ArxivFetcher,
@@ -449,6 +442,13 @@ class LiteraturePipeline:
         except Exception as e:
             print(f"[Pipeline] RAG 保存失败: {e}")
 
+        # 统一重建向量索引 (避免每篇论文后重复 reindex 的性能开销)
+        try:
+            self.rag.kb.vector_store.reindex()
+            print("[Pipeline] 向量索引已重建")
+        except Exception as e:
+            print(f"[Pipeline] 向量索引重建失败: {e}")
+
         return report
 
     # ------------------------------------------------------------------ 生成总结
@@ -540,8 +540,6 @@ class LiteraturePipeline:
             doc_id = self.rag.kb.index_text(
                 summary, source="arxiv", metadata=metadata
             )
-            # 重建向量索引以保证一致性
-            self.rag.kb.vector_store.reindex()
             print(f"  已索引到 RAG (doc_id={doc_id})")
         except Exception as e:
             print(f"  RAG 索引失败: {e}")
@@ -664,7 +662,7 @@ class LiteraturePipeline:
             gen = KnowledgeCloudGenerator()
             output_path = gen.generate(
                 kg,
-                output_path="/workspace/reports/knowledge_cloud.html",
+                output_path=os.path.join(os.getcwd(), "reports", "knowledge_cloud.html"),
                 title=f"航天知识云图 (文献管线更新)",
             )
             print(f"[Pipeline] 知识云图已更新: {output_path}")

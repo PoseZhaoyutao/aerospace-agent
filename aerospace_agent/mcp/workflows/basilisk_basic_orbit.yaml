@@ -1,0 +1,106 @@
+# Basilisk 基础轨道仿真工作流——含姿态对地定向设置
+# 联合仿真轨道与姿态，验证四元数模长守恒
+id: basilisk_basic_orbit
+goal: 使用 Basilisk 进行基础轨道仿真，含姿态对地定向设置
+task_type: attitude_control
+inputs:
+  initial_state:
+    epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    frame:
+      name: GCRF
+      center: Earth
+      realization: IERS2010
+    representation: cartesian
+    position_m: [6771000.0, 0.0, 0.0]
+    velocity_mps: [0.0, 7690.0, 0.0]
+  initial_attitude:
+    epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    frame_from: body
+    frame_to: GCRF
+    representation: quaternion
+    quaternion: [1.0, 0.0, 0.0, 0.0]         # 单位四元数（无旋转）
+    angular_velocity_radps: [0.0, 0.0, 0.0]
+  duration_s: 3600.0                         # 1 小时仿真
+  output_step_s: 10.0                        # 10s 采样
+models:
+  force_model:
+    central_body: Earth
+    gravity: spherical_harmonics
+    degree: 10
+    order: 10
+    drag:
+      enabled: true
+      atmosphere: exponential
+      cd: 2.2
+      area_m2: 1.0
+      mass_kg: 100.0
+    srp:
+      enabled: false
+  spacecraft:
+    name: basilisk_sat
+    mass_kg: 100.0
+    drag_area_m2: 1.0
+    srp_area_m2: 1.0
+    cd: 2.2
+    cr: 1.3
+engine: basilisk
+steps:
+  - name: 传播轨道与姿态
+    tool: propagate_orbit
+    inputs:
+      initial_state_dict: "${inputs.initial_state}"
+      force_model_dict: "${models.force_model}"
+      duration_s: "${inputs.duration_s}"
+      output_step_s: "${inputs.output_step_s}"
+      engine: basilisk
+      # TODO: propagate_orbit 不支持 attitude 参数，姿态联合仿真需扩展工具
+    outputs:
+      - state_history
+      - attitude_history
+    description: Basilisk 联合仿真轨道与姿态动力学
+  # TODO: 工具 extract_attitude_history 未实现，暂时跳过该步骤
+  # - name: 提取姿态历史
+  #   tool: extract_attitude_history
+  #   inputs:
+  #     attitude_history: "${steps.传播轨道与姿态.outputs.attitude_history}"
+  #   outputs:
+  #     - attitude_quaternions
+  #   description: 提取四元数姿态序列用于校验
+outputs:
+  state_history: list[OrbitState]
+  attitude_history: list[AttitudeState]
+  attitude_quaternions: list[list[float]]
+validation:
+  energy_conservation:
+    enabled: true
+    threshold_relative: 1.0e-5
+    description: 比能相对漂移小于 1e-5（含阻力故阈值放宽）
+  quaternion_norm:
+    enabled: true
+    expected_norm: 1.0
+    tolerance: 1.0e-6
+    description: 四元数模长应保持为 1（姿态表示有效性）
+  altitude_positive:
+    enabled: true
+    min_altitude_m: 100000.0
+    description: 轨道高度始终为正
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: Basilisk 不可用时回退到解析二体+姿态运动学
+  on_validation_fail:
+    action: retry
+    max_retries: 2
+    adjust: reduce_step
+    description: 缩小积分步长重试
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [basilisk, attitude, simulation]

@@ -1,0 +1,106 @@
+# 地面站可见性工作流——北京测控站对 LEO 卫星 1 天可见性窗口
+# 最小仰角 5°，1 天窗口，60s 采样
+id: ground_station_access
+goal: 计算北京测控站对 LEO 卫星的可见性窗口（1 天，最小仰角 5°）
+task_type: ground_access
+inputs:
+  initial_state:
+    epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    frame:
+      name: GCRF
+      center: Earth
+      realization: IERS2010
+    representation: cartesian
+    position_m: [6771000.0, 0.0, 0.0]       # 约 394 km 圆轨道
+    velocity_mps: [0.0, 7690.0, 0.0]
+  ground_station:
+    name: Beijing_Station
+    latitude_deg: 40.0789                    # 北京纬度
+    longitude_deg: 116.5867                  # 北京经度
+    altitude_m: 50.0
+    min_elevation_deg: 5.0
+  time_window:
+    start_epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    stop_epoch:                               # stop_epoch = start_epoch + duration_s (86400s)
+      value: "2026-01-02T00:00:00"
+      scale: UTC
+      format: ISO
+    duration_s: 86400.0                      # 1 天
+    step_s: 60.0
+  min_elevation_deg: 5.0
+models:
+  force_model:
+    central_body: Earth
+    gravity: spherical_harmonics
+    degree: 2
+    order: 0
+    drag:
+      enabled: false
+    srp:
+      enabled: false
+  body:
+    name: Earth
+    mu: 3.986004418e14
+    radius: 6378137.0
+    rotation_rate_radps: 7.2921159e-5
+engine: auto
+steps:
+  - name: 传播轨道
+    tool: propagate_orbit
+    inputs:
+      initial_state_dict: "${inputs.initial_state}"
+      force_model_dict: "${models.force_model}"
+      duration_s: "${inputs.time_window.duration_s}"
+      output_step_s: "${inputs.time_window.step_s}"
+    outputs:
+      - state_history
+    description: 传播卫星轨道生成 1 天状态历史
+  - name: 计算可见性窗口
+    tool: compute_ground_access
+    inputs:
+      orbit_state_dict: "${inputs.initial_state}"
+      ground_station_dict: "${inputs.ground_station}"
+      start_epoch_dict: "${inputs.time_window.start_epoch}"
+      stop_epoch_dict: "${inputs.time_window.stop_epoch}"
+      min_elevation_deg: "${inputs.min_elevation_deg}"
+    outputs:
+      - access_windows
+      - max_elevation_deg
+    description: 计算每个可见窗口的起止时间、最大仰角与持续时间
+outputs:
+  state_history: list[OrbitState]
+  access_windows: list[dict]
+  max_elevation_deg: float
+validation:
+  window_count_positive:
+    enabled: true
+    min_windows: 1
+    description: 1 天内至少应有 1 个可见窗口
+  elevation_range:
+    enabled: true
+    min_deg: 0.0
+    max_deg: 90.0
+    description: 仰角应在 0°~90° 范围内
+  window_duration_positive:
+    enabled: true
+    min_duration_s: 60.0
+    description: 每个可见窗口持续时间应大于 0
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: 回退到解析方法近似计算可见性
+  on_no_access:
+    action: warn
+    message: "未找到可见窗口，请检查轨道与站点几何关系"
+    description: 无窗口时发出警告而非报错
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [ground_access, Beijing, LEO]

@@ -1,0 +1,89 @@
+# LEO 轨道传播工作流——二体 + J2 摄动，1 天，60s 采样
+# 初始状态为 ISS 类近地圆轨道（约 394 km 高度）
+id: leo_propagation
+goal: 传播近地圆轨道（ISS 类）1 天，评估 J2 摄动影响
+task_type: orbit_propagation
+inputs:
+  initial_state:
+    epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    frame:
+      name: GCRF
+      center: Earth
+      realization: IERS2010
+    representation: cartesian
+    position_m: [6771000.0, 0.0, 0.0]       # 约 394 km 圆轨道
+    velocity_mps: [0.0, 7690.0, 0.0]        # 近圆轨道速度
+  duration_s: 86400.0                        # 传播 1 天
+  output_step_s: 60.0                        # 每 60s 输出一个状态
+models:
+  force_model:
+    central_body: Earth
+    gravity: spherical_harmonics
+    degree: 2                                # J2 摄动（2阶0次）
+    order: 0
+    drag:
+      enabled: false
+    srp:
+      enabled: false
+    third_body: []
+    relativity: false
+  body:
+    name: Earth
+    mu: 3.986004418e14                       # m³/s²
+    radius: 6378137.0                        # m
+    rotation_rate_radps: 7.2921159e-5        # rad/s
+engine: auto
+steps:
+  - name: 传播轨道
+    tool: propagate_orbit
+    inputs:
+      initial_state_dict: "${inputs.initial_state}"
+      force_model_dict: "${models.force_model}"
+      duration_s: "${inputs.duration_s}"
+      output_step_s: "${inputs.output_step_s}"
+    outputs:
+      - state_history
+      - final_state
+    description: 使用二体+J2 力学模型传播 1 天，每 60s 输出一个状态
+  - name: 转换为开普勒根数
+    tool: convert_orbit_representation
+    inputs:
+      state_dict: "${steps.传播轨道.outputs.final_state}"
+      target_representation: keplerian
+    outputs:
+      - final_elements
+    description: 将末端状态转为开普勒根数便于分析轨道演化
+outputs:
+  state_history: list[OrbitState]
+  final_state: OrbitState
+  final_elements: KeplerianElements
+validation:
+  energy_conservation:
+    enabled: true
+    threshold_relative: 1.0e-6
+    description: 含 J2 时比能相对漂移应小于 1e-6（J2 不做功但数值误差）
+  altitude_positive:
+    enabled: true
+    min_altitude_m: 100000.0
+    description: 轨道高度始终为正（未再入）
+  semi_major_axis_stable:
+    enabled: true
+    threshold_relative: 1.0e-3
+    description: 半长轴相对变化小于 1e-3
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: 首选引擎不可用时回退到解析二体传播
+  on_validation_fail:
+    action: retry
+    max_retries: 2
+    adjust: reduce_step
+    description: 验证失败时缩小积分步长重试
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [LEO, J2, propagation]

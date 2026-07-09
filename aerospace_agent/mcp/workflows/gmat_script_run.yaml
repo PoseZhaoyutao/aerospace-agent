@@ -1,0 +1,118 @@
+# GMAT 脚本执行工作流——LEO 轨道传播
+# 内嵌 GMAT 脚本，执行后解析报告输出为 OrbitState 序列
+id: gmat_script_run
+goal: 执行 GMAT 脚本进行 LEO 轨道传播并解析输出报告
+task_type: orbit_propagation
+inputs:
+  workspace:
+    output_dir: "./gmat_output"
+    report_file: "LEOReport.txt"
+  script: |
+    % GMAT 脚本——LEO 轨道传播（二体，1 天）
+    Create Spacecraft sat;
+    sat.DateFormat = UTCGregorian;
+    sat.Epoch = '01 Jan 2026 00:00:00.000';
+    sat.CoordinateSystem = EarthMJ2000Eq;
+    sat.X = 6771;
+    sat.Y = 0;
+    sat.Z = 0;
+    sat.VX = 0;
+    sat.VY = 7.69;
+    sat.VZ = 0;
+
+    Create ForceModel fm;
+    fm.CentralBody = Earth;
+    fm.PointMasses = {Earth};
+    fm.Drag = none;
+    fm.SRP = off;
+
+    Create Propagator prop;
+    prop.FM = fm;
+    prop.Type = RungeKutta89;
+    prop.InitialStepSize = 60;
+    prop.MaxStep = 60;
+
+    Create ReportFile rf;
+    rf.Filename = 'LEOReport.txt';
+    rf.Add = {sat.UTCGregorian, sat.X, sat.Y, sat.Z, sat.VX, sat.VY, sat.VZ};
+
+    BeginMissionSequence;
+    Propagate prop(sat) {sat.ElapsedDays = 1};
+models:
+  force_model:
+    central_body: Earth
+    gravity: point_mass
+    degree: 0
+    order: 0
+    drag:
+      enabled: false
+    srp:
+      enabled: false
+  spacecraft:
+    name: gmat_sat
+    mass_kg: 100.0
+    drag_area_m2: 1.0
+    srp_area_m2: 1.0
+    cd: 2.2
+    cr: 1.3
+engine: gmat
+steps:
+  - name: 执行GMAT脚本
+    tool: run_gmat_script
+    inputs:
+      script_text: "${inputs.script}"
+      workspace: "${inputs.workspace.output_dir}"
+    outputs:
+      - raw_report
+      - exit_status
+    description: 执行 GMAT 脚本，输出报告文件 LEOReport.txt
+  # TODO: 工具 parse_report 未实现，暂时跳过该步骤
+  #       run_gmat_script 已内置 _parse_gmat_report 返回 parsed_report 字段
+  # - name: 解析报告
+  #   tool: parse_report
+  #   inputs:
+  #     report_path: "${inputs.workspace.output_dir}/${inputs.workspace.report_file}"
+  #     columns: [UTCGregorian, X, Y, Z, VX, VY, VZ]
+  #   outputs:
+  #     - state_history
+  #   description: 解析 GMAT 报告为 OrbitState 序列（单位 km 需转 m）
+outputs:
+  raw_report: str
+  exit_status: int
+  state_history: list[OrbitState]
+validation:
+  exit_status:
+    enabled: true
+    expected: 0
+    description: GMAT 退出码应为 0（成功）
+  state_count:
+    enabled: true
+    min_count: 10
+    description: 解析出的状态点数不少于 10
+  altitude_positive:
+    enabled: true
+    min_altitude_m: 100000.0
+    description: 轨道高度始终为正（未再入）
+  unit_check:
+    enabled: true
+    expected_position_unit: m
+    description: 解析后位置单位必须为 m（GMAT 默认 km 需转换）
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: GMAT 不可用时回退到解析二体传播
+  on_parse_fail:
+    action: retry
+    max_retries: 2
+    adjust: regenerate_script
+    description: 报告解析失败时重新生成脚本并调整输出列格式重试
+  on_exit_error:
+    action: retry
+    max_retries: 1
+    adjust: fix_script_syntax
+    description: GMAT 退出码非 0 时修正脚本语法后重试
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [GMAT, script, LEO]

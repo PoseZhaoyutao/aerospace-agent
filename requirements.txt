@@ -2,10 +2,25 @@
 numpy
 scipy
 click
+pyyaml
 
 # 可视化依赖（可选，用于绘图/报告生成）
 matplotlib
 
+# 交互终端依赖（cli_tui）
+prompt_toolkit
+
+# 测试依赖
+pytest
+pytest-cov
+
 # 可选依赖（未安装时自动回退到内置实现）
 # rich            # 彩色终端输出（未装时回退到 print）
 # openai          # 真实 LLM 调用（已内置标准库实现，无需强制安装）
+# mcp             # MCP Server 协议库（仅独立运行 MCP Server 时需要）
+
+# 可选航天引擎（未安装时 adapter 自动回退，不崩溃）
+# astropy         # 天文计算
+# poliastro       # 轨道力学
+# spiceypy        # SPICE 内核
+# orekit          # 高精度轨道传播

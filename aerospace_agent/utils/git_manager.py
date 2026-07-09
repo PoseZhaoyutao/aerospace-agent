@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Tuple
 
+from aerospace_agent.local_runtime import run_command
+
 
 class GitManager:
     """Git 操作封装。"""
@@ -19,17 +21,16 @@ class GitManager:
     # ------------------------------------------------------------------
     # 内部：执行 git 子命令
     # ------------------------------------------------------------------
-    def _run(self, args: List[str], check: bool = False) -> Tuple[bool, str]:
+    def _run(self, args: List[str], check: bool = False,
+             timeout: int = 60) -> Tuple[bool, str]:
         """执行 git 子命令，返回 (是否成功, 输出文本)。"""
         try:
-            result = subprocess.run(
+            result = run_command(
                 ["git"] + args,
                 cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
+                timeout=timeout,
             )
-            ok = result.returncode == 0
+            ok = result.ok
             out = result.stdout if ok else (result.stderr or result.stdout)
             return ok, out.strip()
         except FileNotFoundError:
@@ -105,3 +106,110 @@ class GitManager:
         """切换分支。"""
         ok, out = self._run(["checkout", name])
         return f"已切换到 '{name}'" if ok else f"checkout 失败: {out}"
+
+    # ------------------------------------------------------------------
+    # 远程协作操作 (push / pull / fetch / remote)
+    # ------------------------------------------------------------------
+    def push(self, remote: str = "origin", branch: str = None,
+             force: bool = False, tags: bool = False) -> str:
+        """推送到远程仓库。
+
+        Args:
+            remote: 远程名称 (默认 origin)
+            branch: 分支名 (为空则推送当前分支)
+            force: 是否强制推送 (--force)
+            tags: 是否推送标签 (--tags)
+
+        Returns:
+            操作结果描述
+        """
+        args = ["push"]
+        if force:
+            args.append("--force")
+        if tags:
+            args.append("--tags")
+        args.append(remote)
+        if branch:
+            args.append(branch)
+        ok, out = self._run(args, timeout=120)
+        if ok:
+            return f"推送成功: {remote}" + (f"/{branch}" if branch else "")
+        return f"push 失败: {out}"
+
+    def pull(self, remote: str = "origin", branch: str = None) -> str:
+        """从远程仓库拉取并合并。
+
+        Args:
+            remote: 远程名称 (默认 origin)
+            branch: 分支名 (为空则拉取当前分支)
+
+        Returns:
+            操作结果描述
+        """
+        args = ["pull", remote]
+        if branch:
+            args.append(branch)
+        ok, out = self._run(args, timeout=120)
+        if ok:
+            return f"拉取成功: {remote}" + (f"/{branch}" if branch else "")
+        return f"pull 失败: {out}"
+
+    def fetch(self, remote: str = "origin", branch: str = None,
+              all_remotes: bool = False) -> str:
+        """从远程仓库获取 (不合并)。
+
+        Args:
+            remote: 远程名称 (默认 origin)
+            branch: 分支名 (为空则获取所有分支)
+            all_remotes: 是否获取所有远程 (--all)
+
+        Returns:
+            操作结果描述
+        """
+        args = ["fetch"]
+        if all_remotes:
+            args.append("--all")
+        else:
+            args.append(remote)
+            if branch:
+                args.append(branch)
+        ok, out = self._run(args, timeout=120)
+        if ok:
+            return f"fetch 成功: {remote}" + (f"/{branch}" if branch else "")
+        return f"fetch 失败: {out}"
+
+    def add_remote(self, name: str, url: str) -> str:
+        """添加远程仓库。
+
+        Args:
+            name: 远程名称 (如 origin)
+            url: 远程仓库 URL
+
+        Returns:
+            操作结果描述
+        """
+        ok, out = self._run(["remote", "add", name, url])
+        return f"远程 '{name}' 已添加" if ok else f"add_remote 失败: {out}"
+
+    def list_remotes(self) -> str:
+        """列出已配置的远程仓库。"""
+        ok, out = self._run(["remote", "-v"])
+        return out if ok else "无远程仓库配置"
+
+    def clone(self, url: str, dest: str = None) -> str:
+        """克隆远程仓库到指定目录。
+
+        Args:
+            url: 远程仓库 URL
+            dest: 目标目录 (为空则使用仓库名)
+
+        Returns:
+            操作结果描述
+        """
+        args = ["clone", url]
+        if dest:
+            args.append(dest)
+        ok, out = self._run(args, timeout=300)
+        if ok:
+            return f"克隆成功: {url}"
+        return f"clone 失败: {out}"

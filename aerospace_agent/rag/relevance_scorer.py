@@ -378,11 +378,7 @@ class RelevanceScorer:
     @staticmethod
     def _create_default_llm():
         """通过 create_llm() 创建默认 LLM。"""
-        import sys
-        sys.path.insert(
-            0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-        from core.llm_interface import create_llm
+        from ..core.llm_interface import create_llm
         return create_llm()
 
     @staticmethod

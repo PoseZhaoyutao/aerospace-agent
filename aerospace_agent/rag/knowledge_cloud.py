@@ -85,7 +85,7 @@ RELATION_STYLES: Dict[str, Dict[str, Any]] = {
 class KnowledgeCloudGenerator:
     """把 :class:`KnowledgeGraph` 转成交互式 HTML 力导向云图。"""
 
-    DEFAULT_OUTPUT = "/workspace/reports/knowledge_cloud.html"
+    DEFAULT_OUTPUT = os.path.join(os.getcwd(), "reports", "knowledge_cloud.html")
 
     # ==================================================================
     # 数据导出
@@ -176,7 +176,7 @@ class KnowledgeCloudGenerator:
         self,
         knowledge_graph: Any,
         history: Optional[Sequence[Any]] = None,
-        output_path: str = "/workspace/reports/knowledge_cloud_temporal.html",
+        output_path: str = os.path.join(os.getcwd(), "reports", "knowledge_cloud_temporal.html"),
         title: str = "航天知识云图 (时间演进)",
     ) -> str:
         """生成带时间轴的演进版本。

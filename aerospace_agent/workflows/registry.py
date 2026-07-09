@@ -8,10 +8,11 @@
     * ``list_workflows()``         — 列出全部工作流元信息
 
 注册的工作流：
-    - orbit_design       (OrbitDesignWorkflow)
-    - launch_window      (LaunchWindowWorkflow)
-    - lunar_transfer     (TrajectoryAnalysisWorkflow)
-    - basilisk_viz       (BasiliskVisualizationWorkflow)
+    - orbit_design        (OrbitDesignWorkflow)
+    - launch_window       (LaunchWindowWorkflow)
+    - lunar_transfer      (TrajectoryAnalysisWorkflow)
+    - basilisk_viz        (BasiliskVisualizationWorkflow)
+    - literature_review   (LiteratureReviewWorkflow)
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from .orbit_design import OrbitDesignWorkflow  # noqa: F401
 from .launch_window import LaunchWindowWorkflow  # noqa: F401
 from .trajectory_analysis import TrajectoryAnalysisWorkflow  # noqa: F401
 from .basilisk_visualization import BasiliskVisualizationWorkflow  # noqa: F401
+from .literature_review import LiteratureReviewWorkflow  # noqa: F401
 
 
 # 全局默认工作流注册表 (与 base.workflow_registry 同一实例, 已含全部工作流)
@@ -88,8 +90,9 @@ if __name__ == "__main__":
     miss = get_workflow("not_exist")
     assert miss is None
 
-    # 确认全部 4 个工作流已注册
-    expected = {"orbit_design", "launch_window", "lunar_transfer", "basilisk_viz"}
+    # 确认全部 5 个工作流已注册
+    expected = {"orbit_design", "launch_window", "lunar_transfer", "basilisk_viz",
+                "literature_review"}
     assert set(list_workflow_names()) == expected, \
         f"工作流不匹配, 期望 {expected}, 实际 {set(list_workflow_names())}"
 

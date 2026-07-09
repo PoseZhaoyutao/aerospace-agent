@@ -12,6 +12,7 @@
 - :class:`LaunchWindowWorkflow`           (name='launch_window')  发射窗口分析
 - :class:`TrajectoryAnalysisWorkflow`     (name='lunar_transfer') 地月转移轨迹分析 (核心)
 - :class:`BasiliskVisualizationWorkflow`  (name='basilisk_viz')   Basilisk 可视化
+- :class:`LiteratureReviewWorkflow`       (name='literature_review') 文献综述→云图→报告
 
 快速使用
 --------
@@ -27,6 +28,12 @@
     # 按名执行
     result = default_workflow_registry.execute("lunar_transfer", launch_date=None)
     print(result.summary, result.metadata["dv_total_km_s"])
+
+    # 文献综述工作流 (搜索文献 + 云图 + 报告)
+    r = default_workflow_registry.execute("literature_review",
+                                          research_topic="lunar transfer orbit",
+                                          max_papers=5)
+    print(r.summary, r.artifacts)
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from .orbit_design import OrbitDesignWorkflow
 from .launch_window import LaunchWindowWorkflow
 from .trajectory_analysis import TrajectoryAnalysisWorkflow, build_formula_derivation
 from .basilisk_visualization import BasiliskVisualizationWorkflow
+from .literature_review import LiteratureReviewWorkflow
 from .registry import (
     default_workflow_registry,
     get_workflow,
@@ -62,6 +70,7 @@ __all__ = [
     "LaunchWindowWorkflow",
     "TrajectoryAnalysisWorkflow",
     "BasiliskVisualizationWorkflow",
+    "LiteratureReviewWorkflow",
     # 公式推导
     "build_formula_derivation",
     # 注册表与便捷函数

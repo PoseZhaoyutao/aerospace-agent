@@ -15,15 +15,20 @@ ReAct 输出格式约定：
 """
 from __future__ import annotations
 
+import ast
 import json
+import logging
 import math
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .context_manager import ContextManager
 from .llm_interface import LLMInterface, create_llm
-from .memory import LongTermMemory, ShortTermMemory
+from .memory import LongTermMemory, ShortTermMemory, MemoryManager
+
+# 模块级日志器：用于关键路径异常告警（替代静默 except pass）
+_logger = logging.getLogger(__name__)
 
 
 class Tool:
@@ -96,11 +101,15 @@ def _orbital_velocity(altitude_km: float = 400) -> str:
 
 
 def _calculator(expression: str) -> str:
-    """安全表达式计算器（仅允许数字与数学运算符）。"""
-    if not re.fullmatch(r"[0-9eE+\-*/()., ]+", expression):
+    """安全表达式计算器（允许数字、数学运算符和基本函数）。"""
+    # 支持的字符：数字、运算符、括号、逗号、空格、字母（用于 math 函数和常量）
+    if not re.fullmatch(r"[0-9a-zA-Z_+\-*/().,=<>!&|%~^ ]+", expression):
         return "错误：表达式包含非法字符"
     try:
-        value = eval(expression, {"__builtins__": {}}, {"math": math})
+        # 替换 ^ 为 **（幂运算）
+        safe_expr = expression.replace("^", "**")
+        # 将 math 函数注入命名空间
+        value = eval(safe_expr, {"__builtins__": {}}, {"math": math, "pi": math.pi, "e": math.e})
         return f"{expression} = {value}"
     except Exception as e:
         return f"计算错误: {e}"
@@ -211,13 +220,21 @@ class AerospaceAgent:
         self.context_manager = context_manager or ContextManager()
         self.memory = memory or LongTermMemory()
         self.short_memory = ShortTermMemory()
+        # MemoryManager 统一管理三层记忆 (可选,由 create_default_agent 装配)
+        self.memory_manager: Optional[MemoryManager] = None
         self.tools: Dict[str, Tool] = {t.name: t for t in (tools or [])}
         self.workflows: Dict[str, Workflow] = {w.name: w for w in (workflows or [])}
         self.max_steps = max_steps
         # MCP 工具注册表（BaseTool 实例，接口与原生 Tool 不同，单独存放）
         self.mcp_tools: Dict[str, Any] = {}
+        # BaseWorkflow 实例（workflows/ 包中的预定义工作流，支持 execute() 直接执行）
+        self.base_workflows: Dict[str, Any] = {}
+        # 工具向量索引（按任务语义检索 top-K 工具，替代全量注入）
+        self.tool_index: Optional[Any] = None
         # 可选挂载的 RAG（由 create_default_agent 设置）
         self.rag: Optional[SimpleRAG] = None
+        # K5-H1: 初始化 system_prompt 属性，防止非工厂构造时 AttributeError
+        self.system_prompt: Optional[str] = None
 
     # ------------------------------------------------------------------
     # 注册
@@ -244,6 +261,16 @@ class AerospaceAgent:
         """批量注册工作流。"""
         for w in workflows:
             self.register_workflow(w)
+
+    def register_base_workflow(self, bw: Any) -> None:
+        """注册一个 BaseWorkflow 实例（来自 workflows/ 包，支持 execute() 直接执行）。"""
+        if getattr(bw, "name", None):
+            self.base_workflows[bw.name] = bw
+
+    def register_base_workflows(self, bws: List[Any]) -> None:
+        """批量注册 BaseWorkflow 实例。"""
+        for bw in bws:
+            self.register_base_workflow(bw)
 
     # ------------------------------------------------------------------
     # ReAct 解析
@@ -304,29 +331,200 @@ class AerospaceAgent:
     # 工具执行
     # ------------------------------------------------------------------
     def _execute_tool(self, tool_name: str, args: Any) -> str:
-        """执行指定工具（原生 Tool 或 MCP BaseTool），返回结果字符串。"""
+        """执行指定工具（原生 Tool 或 MCP BaseTool），返回结果字符串。
+
+        统一入口：原生工具直接调用，MCP 工具走智能参数适配。
+        """
         # 原生工具
         tool = self.tools.get(tool_name)
         if tool is not None:
             try:
-                result = tool(**args) if isinstance(args, dict) else tool(args)
+                result = tool(**args) if isinstance(args, dict) else tool(input=args)
                 return str(result)
             except Exception as e:
                 return f"工具执行错误: {e}"
         # MCP 工具（BaseTool.call(method, **kwargs) 接口）
         bt = self.mcp_tools.get(tool_name)
         if bt is not None:
+            if not isinstance(args, dict):
+                args = {"input": args}
+            # 智能选择方法 + 参数适配
+            method, adapted_kw, hint = self._adapt_mcp_call(bt, args)
+            if hint:
+                return hint
             try:
-                kw = dict(args) if isinstance(args, dict) else {"input": args}
-                method = kw.pop("method", None)
-                if method is None:
-                    methods = getattr(bt, "list_methods", lambda: [])()
-                    method = methods[0] if methods else ""
-                res = bt.call(method, **kw)
+                res = bt.call(method, **adapted_kw)
                 return json.dumps(res, ensure_ascii=False, default=str)
+            except TypeError as e:
+                schema = self._get_method_schema(bt, method)
+                return (
+                    f"MCP 工具执行错误: {e}\n"
+                    f"  方法 '{method}' 期望参数: {schema}\n"
+                    f"  实际传入: {list(adapted_kw.keys())}"
+                )
             except Exception as e:
                 return f"MCP 工具执行错误: {e}"
-        return f"错误：未知工具 '{tool_name}'"
+        available = list(self.tools.keys()) + list(self.mcp_tools.keys())
+        return f"错误：未知工具 '{tool_name}'（可用: {available}）"
+
+    # ------------------------------------------------------------------
+    # 智能参数适配 (从 CEOEngine 迁移,统一工具执行入口)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_action_input(raw: str) -> dict:
+        """智能解析 Action Input — 多策略。
+
+        策略链：JSON → ast.literal_eval → 安全 eval → 回退。
+        """
+        raw = raw.strip()
+        try:
+            result = json.loads(raw)
+            if isinstance(result, dict):
+                return result
+            return {"input": result}
+        except (json.JSONDecodeError, ValueError):
+            pass
+        try:
+            result = ast.literal_eval(raw)
+            if isinstance(result, dict):
+                return result
+            return {"input": result}
+        except (ValueError, SyntaxError):
+            pass
+        try:
+            safe_ns = {
+                "math": math, "pi": math.pi, "e": math.e,
+                "abs": abs, "sqrt": math.sqrt, "pow": pow,
+                "min": min, "max": max, "round": round,
+                "__builtins__": {},
+            }
+            result = eval(raw, safe_ns, {})  # noqa: S307
+            if isinstance(result, dict):
+                return result
+            return {"input": result}
+        except Exception:
+            pass
+        return {"input": raw}
+
+    @staticmethod
+    def _get_method_schema(bt, method: str) -> str:
+        """获取工具方法的参数 schema。"""
+        schema = getattr(bt, "methods_schema", {})
+        if method in schema:
+            params = schema[method].get("params", {})
+            return ", ".join(f"{k}: {v}" for k, v in params.items())
+        return "(未知)"
+
+    def _adapt_mcp_call(self, bt, args: dict) -> Tuple[str, dict, str]:
+        """智能适配 MCP 工具调用。返回 (method, adapted_kwargs, error_hint)。"""
+        method = args.pop("method", None)
+        if not method:
+            method = self._select_best_method(bt, args)
+        if not method:
+            methods = getattr(bt, "list_methods", lambda: [])()
+            return "", args, f"工具 '{bt.name}' 无可用方法。方法列表: {methods}"
+        adapted = self._map_params(bt, method, args)
+        return method, adapted, ""
+
+    def _select_best_method(self, bt, args: dict) -> str:
+        """根据传入参数选择最佳匹配方法。"""
+        schema = getattr(bt, "methods_schema", {})
+        if not schema:
+            methods = getattr(bt, "list_methods", lambda: [])()
+            return methods[0] if methods else ""
+        arg_keys = set(args.keys())
+        best_method = ""
+        best_score = -1
+        for mname, mschema in schema.items():
+            param_keys = set(mschema.get("params", {}).keys())
+            overlap = len(arg_keys & param_keys)
+            extra = len(arg_keys - param_keys)
+            score = overlap * 2 - extra
+            if score > best_score:
+                best_score = score
+                best_method = mname
+        if best_score <= 0:
+            methods = list(schema.keys())
+            return methods[0] if methods else ""
+        return best_method
+
+    def _map_params(self, bt, method: str, args: dict) -> dict:
+        """参数名映射 — 将 LLM 友好参数名映射到工具期望参数名。"""
+        schema = getattr(bt, "methods_schema", {})
+        mschema = schema.get(method, {})
+        expected_params = mschema.get("params", {})
+        arg_keys = set(args.keys())
+        expected_keys = set(expected_params.keys())
+        if arg_keys and arg_keys.issubset(expected_keys):
+            return dict(args)
+        if method == "simulate" and bt.name == "basilisk":
+            return self._adapt_basilisk_simulate(args, expected_params)
+        if "scenario_config" in expected_keys and "scenario_config" not in args:
+            config = {}
+            duration = None
+            for k, v in args.items():
+                if k in ("duration_s", "duration", "sim_duration"):
+                    duration = v
+                elif k in expected_keys:
+                    pass
+                else:
+                    config[k] = v
+            result = {}
+            if config:
+                result["scenario_config"] = config
+            if duration is not None and "duration" in expected_keys:
+                result["duration"] = self._to_float(duration)
+            for k in arg_keys & expected_keys:
+                result[k] = args[k]
+            if result:
+                return result
+        if len(expected_keys) == 1:
+            only_param = list(expected_keys)[0]
+            if only_param not in args:
+                return {only_param: dict(args)}
+        return dict(args)
+
+    @staticmethod
+    def _adapt_basilisk_simulate(args: dict, expected_params: dict) -> dict:
+        """BasiliskTool.simulate 专用参数适配。"""
+        config = {}
+        duration = None
+        for k, v in args.items():
+            if k in ("duration_s", "duration", "sim_duration"):
+                duration = v
+            elif k in ("initial_state", "state", "state_vec"):
+                if isinstance(v, dict):
+                    r = v.get("r", v.get("position", [0, 0, 0]))
+                    vel = v.get("v", v.get("velocity", [0, 0, 0]))
+                    state = list(r) + list(vel)
+                elif isinstance(v, (list, tuple)):
+                    state = list(v)
+                else:
+                    state = [0, 0, 0, 0, 0, 0]
+                config["spacecraft"] = [{"state": state, "dynamics": "point_mass"}]
+            elif k in ("force_model", "forces"):
+                fm = v if isinstance(v, dict) else {"model": str(v)}
+                if "mu" in fm:
+                    config["mu"] = fm["mu"]
+                config["force_model"] = fm
+            elif k in ("dt", "step_size", "output_step_s"):
+                config["dt"] = v
+            else:
+                config[k] = v
+        result = {}
+        if config:
+            result["scenario_config"] = config
+        if duration is not None and "duration" in expected_params:
+            result["duration"] = float(duration)
+        return result
+
+    @staticmethod
+    def _to_float(val) -> float:
+        """安全转 float。"""
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
 
     # ------------------------------------------------------------------
     # 工作流匹配
@@ -382,12 +580,12 @@ class AerospaceAgent:
 
         for step in range(1, self.max_steps + 1):
             print(f"\n--- ReAct 第 {step}/{self.max_steps} 步 ---")
-            step_messages = list(messages)
+            # K5-H2: 累积历史消息（与 run_react_stream 对齐），而非每步重建
             if observation:
-                step_messages.append({"role": "user", "content": observation})
+                messages.append({"role": "user", "content": observation})
 
             try:
-                response = self.llm.chat(step_messages)
+                response = self.llm.chat(messages)
             except Exception as e:
                 print(f"[LLM 调用失败] {e}")
                 return f"任务失败：LLM 调用异常 - {e}"
@@ -397,6 +595,8 @@ class AerospaceAgent:
             print(f"[Thought]\n{preview}")
             self.short_memory.add("assistant", response)
             self.context_manager.add_message("assistant", response)
+            # K5-H2: 将 LLM 回复累积到 messages，保持多步推理上下文
+            messages.append({"role": "assistant", "content": response})
 
             # 解析最终答案
             final = self._parse_final_answer(response)
@@ -429,6 +629,216 @@ class AerospaceAgent:
         print("========== 任务结束 ==========\n")
         return "已达到最大推理步数，任务未得出最终答案。"
 
+    # ------------------------------------------------------------------
+    # 快速执行路径 — 优先直接运行 BaseWorkflow，回退到精简 ReAct
+    # ------------------------------------------------------------------
+    # BaseWorkflow 关键词匹配表（顺序即优先级：特定任务在前，通用在后）
+    _BW_KEYWORD_MAP: Dict[str, List[str]] = {
+        "lunar_transfer": ["地月转移", "月球转移", "lunar transfer",
+                           "月球轨道", "登月", "tle"],
+        "launch_window": ["发射窗口", "launch window", "窗口分析"],
+        "basilisk_viz": ["可视化", "仿真", "visualization", "basilisk", "3d"],
+        "literature_review": ["文献", "论文", "literature", "paper", "综述"],
+        "orbit_design": ["轨道设计", "轨道参数", "orbit design", "leo", "geo",
+                         "sso", "molniya", "圆轨道", "静止轨道", "太阳同步"],
+    }
+
+    def _match_base_workflow(self, task: str) -> Optional[str]:
+        """根据任务文本匹配 BaseWorkflow 名称（优先级高者优先）。"""
+        low = task.lower()
+        best_name: Optional[str] = None
+        best_score = 0
+        for wf_name, keywords in self._BW_KEYWORD_MAP.items():
+            if wf_name not in self.base_workflows:
+                continue
+            score = sum(1 for kw in keywords if kw in task or kw in low)
+            # 使用 >= 让后出现的同名分也不覆盖先出现的（保持表顺序优先级）
+            if score > best_score:
+                best_score = score
+                best_name = wf_name
+        return best_name if best_score > 0 else None
+
+    def run_fast(self, task: str, **wf_params) -> str:
+        """快速执行路径——优先直接运行匹配的 BaseWorkflow。
+
+        流程：
+          1. 匹配预定义 BaseWorkflow → 直接 execute()（0 次 LLM 调用，最快）
+          2. 匹配失败 → 回退到精简 ReAct 循环 run_react_fast()
+
+        Args:
+            task: 用户任务描述
+            **wf_params: 传递给 BaseWorkflow.execute() 的参数
+
+        Returns:
+            结果文本
+        """
+        print(f"\n========== 快速执行 ==========")
+        print(f"任务: {task}")
+
+        # 1. 尝试匹配 BaseWorkflow
+        wf_name = self._match_base_workflow(task)
+        if wf_name:
+            bw = self.base_workflows[wf_name]
+            print(f"[匹配工作流] {wf_name}: {getattr(bw, 'description', '')}")
+            try:
+                result = bw.execute(**wf_params)
+                return self._format_workflow_result(wf_name, result)
+            except Exception as e:
+                print(f"[工作流执行失败: {e}] 回退到 ReAct")
+
+        # 2. 回退到精简 ReAct
+        print("[未匹配工作流] 使用精简 ReAct 循环")
+        return self.run_react_fast(task)
+
+    @staticmethod
+    def _format_workflow_result(wf_name: str, result: Any) -> str:
+        """将 WorkflowResult 格式化为可读文本。"""
+        if hasattr(result, "success"):
+            lines = [
+                f"## 工作流: {wf_name}",
+                f"状态: {'成功' if result.success else '失败'}",
+                f"摘要: {result.summary}",
+            ]
+            if result.steps_log:
+                lines.append("\n### 执行步骤:")
+                for s in result.steps_log:
+                    icon = "OK" if s.get("status") == "success" else "FAIL"
+                    lines.append(f"  [{icon}] {s.get('step','')}: {s.get('detail','')}")
+            if result.artifacts:
+                lines.append("\n### 产出文件:")
+                for a in result.artifacts:
+                    lines.append(f"  - {a}")
+            if result.result and isinstance(result.result, dict):
+                lines.append("\n### 关键结果:")
+                for k, v in list(result.result.items())[:10]:
+                    lines.append(f"  - {k}: {v}")
+            return "\n".join(lines)
+        return str(result)
+
+    def run_react_fast(self, task: str, max_steps: int = 6) -> str:
+        """精简 ReAct 循环——去除重上下文管理/记忆/指标开销，专注快速推理。
+
+        与 run_react_stream 的区别：
+        - 无 Phase A 蓝图注入
+        - 无 MemoryManager 召回/工作记忆
+        - 无 metrics 观测性埋点
+        - 无 CEO 三层上下文管理（仅 system + 对话）
+        - 默认 6 步上限（非 9999）
+        - system prompt 精简（只含工具列表 + 格式说明）
+
+        Args:
+            task: 用户任务描述
+            max_steps: 最大推理步数（默认 6）
+
+        Returns:
+            最终答案文本
+        """
+        print(f"\n--- 精简 ReAct (max={max_steps}) ---")
+        self.short_memory.add("user", task)
+
+        # 工具发现：向量检索 top-K 相关工具（替代全量 105 个注入）
+        # 始终保留 create_tool（自进化入口）
+        always_include = {"create_tool", "list_tools", "tool_help"}
+
+        if self.tool_index and self.tool_index.is_built:
+            # 语义检索 top-K
+            from ..research_tools import get_registry as _get_rt
+            _rt = _get_rt()
+            hits = self.tool_index.search(task, k=8)
+            tool_names = set(h["name"] for h in hits) | always_include
+            schemas = []
+            for name in sorted(tool_names):
+                tool = _rt.get(name)
+                if tool:
+                    schemas.append(tool.to_schema())
+                elif name in self.tools:
+                    schemas.append(self.tools[name].to_schema())
+            tool_list = "\n".join(schemas) if schemas else "- (无可用工具)"
+            tool_count = len(schemas)
+        else:
+            # 回退：全量按分类展示
+            from collections import defaultdict
+            _cat_tools: Dict[str, List[str]] = defaultdict(list)
+            for name, t in self.tools.items():
+                _cat_tools["general"].append(t.to_schema())
+            try:
+                from ..research_tools import get_registry as _get_rt
+                _rt = _get_rt()
+                for cat, tools in _rt.categories().items():
+                    _cat_tools[cat] = [f"- {t}" for t in tools]
+            except Exception:
+                pass
+            tool_sections = []
+            for cat, lines in sorted(_cat_tools.items()):
+                if lines:
+                    tool_sections.append(f"  [{cat}] ({len(lines)})\n    " + "\n    ".join(lines))
+            tool_list = "\n".join(tool_sections) if tool_sections else "- (无可用工具)"
+            tool_count = sum(len(v) for v in _cat_tools.values())
+
+        system = (
+            "你是航天动力学 Agent，使用 ReAct 模式解决任务。\n\n"
+            f"可用工具（{tool_count} 个，按相关度精选）：\n{tool_list}\n\n"
+            "回复格式：\n"
+            "Thought: <推理>\n"
+            "Action: <工具名>\n"
+            "Action Input: <JSON 参数>\n\n"
+            "或：\n"
+            "Thought: <推理>\n"
+            "Final Answer: <最终答案>\n\n"
+            "提示：如果需要的工具不在列表中，调用 list_tools 查看更多，"
+            "或调用 create_tool 创建新工具。\n"
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": task},
+        ]
+
+        observation = ""
+        for step in range(1, max_steps + 1):
+            print(f"  [ReAct 第 {step}/{max_steps} 步]")
+            if observation:
+                messages.append({"role": "user", "content": observation})
+
+            try:
+                response = self.llm.chat(messages)
+            except Exception as e:
+                return f"任务失败：LLM 调用异常 - {e}"
+
+            if not response.strip():
+                return "LLM 返回空响应，终止推理。"
+
+            messages.append({"role": "assistant", "content": response})
+
+            # 解析 Final Answer
+            final = self._parse_final_answer(response)
+            if final:
+                print(f"  [最终答案] {final[:200]}")
+                self._persist_memory(task, final)
+                return final
+
+            # 解析 Action
+            action = self._parse_action(response)
+            if not action:
+                self._persist_memory(task, response)
+                return response
+
+            tool_name = action["tool"]
+            args = action["args"]
+            if isinstance(args, str):
+                args = self._parse_action_input(args)
+
+            print(f"  [Action] {tool_name}, 参数: {args}")
+            result = self._execute_tool(tool_name, args)
+            print(f"  [Observation] {str(result)[:200]}")
+            observation = f"Observation: {result}"
+
+            # 错误时注入提示
+            if "错误" in result or "error" in result.lower():
+                observation += "\n提示: 请调整参数或换用其他工具。"
+
+        print(f"  [达到最大步数 {max_steps}]")
+        return f"已达到最大推理步数({max_steps})，未得出最终答案。"
+
     def _persist_memory(self, task: str, answer: str) -> None:
         """将任务与答案持久化到长期记忆。"""
         try:
@@ -436,6 +846,568 @@ class AerospaceAgent:
             self.memory.save()
         except Exception as e:
             print(f"[记忆持久化失败] {e}")
+
+    # ------------------------------------------------------------------
+    # 原生 Function Calling 循环（参考 Claude Code 架构）
+    # ------------------------------------------------------------------
+    def run_native(self, task: str, max_steps: int = 10) -> str:
+        """原生 Function Calling Agent 循环。
+
+        与 run_react_fast 的根本区别：
+        - LLM 直接输出结构化 tool_call，不用正则解析文本
+        - 工具结果以 tool role 消息返回（OpenAI 标准）
+        - system prompt 不注入工具列表（工具通过 tools 参数传递）
+        - 工具定义静态锁定（利用 prompt caching）
+
+        参考: Anthropic Claude Code 的 agentic loop 架构
+        """
+        print(f"\n========== 原生 Function Calling ==========")
+        print(f"任务: {task}")
+
+        # 1. 构建工具定义（OpenAI 格式）
+        tools_def = self._build_tools_for_native(task)
+        if not tools_def:
+            print("[无可用工具] 回退到 run_react_fast")
+            return self.run_react_fast(task, max_steps=max_steps)
+
+        print(f"  工具数: {len(tools_def)} (向量检索精选)")
+
+        # 2. 构建 messages（静态 system + 动态 history）
+        system = (
+            "你是航天动力学科研 Agent。根据用户需求调用工具完成任务。\n"
+            "规则：\n"
+            "1. 先分析需要什么信息，调用相应工具\n"
+            "2. 工具返回后判断是否需要更多操作\n"
+            "3. 任务完成后给出最终答案\n"
+            "4. 如果工具不存在，调用 create_tool 创建新工具\n"
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": task},
+        ]
+
+        # 3. Agent 循环
+        for step in range(1, max_steps + 1):
+            print(f"\n  [Step {step}/{max_steps}]")
+
+            try:
+                resp = self.llm.chat_with_tools(messages, tools_def, timeout=120)
+            except Exception as e:
+                print(f"  [LLM 调用失败] {e}")
+                return f"任务失败：LLM 调用异常 - {e}"
+
+            content = resp.get("content")
+            tool_calls = resp.get("tool_calls")
+            finish_reason = resp.get("finish_reason", "stop")
+
+            # 如果有文本内容，打印
+            if content:
+                print(f"  [思考] {content[:200]}")
+
+            # 没有 tool_calls → 任务完成
+            if not tool_calls:
+                answer = content or "(无输出)"
+                print(f"  [完成] finish_reason={finish_reason}")
+                self._persist_memory(task, answer)
+                return answer
+
+            # 将 assistant 的 tool_calls 加入 messages
+            assistant_msg = {"role": "assistant", "content": content}
+            # 保留原始 tool_calls 格式供 API 使用
+            raw_calls = []
+            for tc in tool_calls:
+                raw_calls.append({
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
+                    },
+                })
+            assistant_msg["tool_calls"] = raw_calls
+            messages.append(assistant_msg)
+
+            # 执行每个 tool_call
+            for tc in tool_calls:
+                tool_name = tc["name"]
+                tool_args = tc["arguments"]
+                call_id = tc["id"]
+
+                print(f"  [调用] {tool_name}({tool_args})")
+
+                # 执行工具
+                result = self._execute_tool(tool_name, tool_args)
+
+                # 大输出写文件（参考 Claude Code 的 dynamic context discovery）
+                result_str = json.dumps(result, ensure_ascii=False) if not isinstance(result, str) else result
+                if len(result_str) > 2000:
+                    import os as _os
+                    import tempfile as _tf
+                    _tmp = _os.path.join(_tf.gettempdir(), f"tool_out_{call_id}.txt")
+                    with open(_tmp, "w", encoding="utf-8") as _f:
+                        _f.write(result_str)
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": f"输出已写入文件: {_tmp} (共 {len(result_str)} 字符)。摘要: {result_str[:500]}...",
+                    }
+                    print(f"  [结果] 输出过大({len(result_str)}字符)，写入 {_tmp}")
+                else:
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result_str,
+                    }
+                    print(f"  [结果] {result_str[:200]}")
+
+                messages.append(tool_msg)
+
+        print(f"\n  [达到最大步数 {max_steps}]")
+        return f"已达到最大步数({max_steps})，未得出最终答案。"
+
+    def _build_tools_for_native(self, task: str) -> List[Dict]:
+        """构建 OpenAI 格式工具定义——向量检索 top-K + 元工具。
+
+        参考 Claude Code: 工具定义静态锁定，不放入 system prompt。
+        """
+        from ..research_tools import get_registry as _get_rt
+        _rt = _get_rt()
+
+        always_include = {"create_tool", "list_tools", "tool_help"}
+        tool_names = set()
+
+        # 向量检索 top-K
+        if self.tool_index and self.tool_index.is_built:
+            hits = self.tool_index.search(task, k=10)
+            tool_names = set(h["name"] for h in hits)
+
+        tool_names |= always_include
+
+        # 构建 OpenAI 格式
+        tools_def = []
+        for name in sorted(tool_names):
+            tool = _rt.get(name)
+            if tool is None and name in self.tools:
+                # 原生 Tool
+                tools_def.append({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": self.tools[name].description,
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                })
+            elif tool:
+                # ResearchTool → 转 JSON Schema
+                props = {}
+                required = []
+                for p in tool.params:
+                    props[p.name] = {
+                        "type": p.type,
+                        "description": p.description,
+                    }
+                    if p.default is not None:
+                        props[p.name]["default"] = p.default
+                    if p.required:
+                        required.append(p.name)
+                tools_def.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": props,
+                            "required": required,
+                        },
+                    },
+                })
+        return tools_def
+
+    # ------------------------------------------------------------------
+    # QueryEngine 驱动（1:1 复刻 CCB 架构）
+    # ------------------------------------------------------------------
+    def _build_tool_interfaces(self) -> List[Any]:
+        """构建 ToolInterface 列表 — 将所有工具适配为新接口。"""
+        from .tool_adapter import (
+            wrap_callable_tools,
+            wrap_research_tools,
+        )
+        interfaces = []
+        # 1. 原生 Tool (name, description, func)
+        interfaces.extend(wrap_callable_tools(list(self.tools.values())))
+        # 2. ResearchTool (dataclass)
+        try:
+            from ..research_tools import get_registry as _get_rt
+            _rt = _get_rt()
+            interfaces.extend(wrap_research_tools(_rt))
+        except Exception:
+            pass
+        return interfaces
+
+    def run_query_engine(
+        self,
+        task: str,
+        max_turns: int = 25,
+        stream_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """QueryEngine 驱动的 Agent 循环 — 1:1 复刻 CCB query loop。
+
+        替代 run_native()，使用 QueryEngine + query() 异步生成器架构。
+
+        流程（照搬 CCB）：
+        1. 构建 ToolInterface 列表 + OpenAI tools_def
+        2. 创建 QueryEngineConfig
+        3. QueryEngine.submit_message() 异步生成器
+        4. 收集 SDKMessage → 提取最终结果
+
+        Args:
+            task: 用户任务
+            max_turns: 最大轮数
+            stream_callback: 流式输出回调
+
+        Returns:
+            最终结果文本
+        """
+        import asyncio
+
+        # 1. 构建 ToolInterface 列表
+        tool_interfaces = self._build_tool_interfaces()
+        if not tool_interfaces:
+            # 回退到 run_react_fast
+            return self.run_react_fast(task, max_steps=max_turns)
+
+        # 2. 向量检索 top-K 工具
+        from .tool_adapter import build_tools_def_for_query
+        tool_names = None
+        if self.tool_index and self.tool_index.is_built:
+            hits = self.tool_index.search(task, k=10)
+            tool_names = set(h["name"] for h in hits)
+            # 始终包含元工具
+            tool_names |= {"create_tool", "list_tools", "tool_help"}
+
+        tools_def = build_tools_def_for_query(tool_interfaces, tool_names)
+        if not tools_def:
+            return self.run_react_fast(task, max_steps=max_turns)
+
+        # 3. 构建 QueryEngineConfig
+        from .query_engine import QueryEngine, QueryEngineConfig
+        config = QueryEngineConfig(
+            tools=tool_interfaces,
+            llm=self.llm,
+            tools_def=tools_def,
+            max_turns=max_turns,
+            stream_callback=stream_callback,
+            verbose=False,
+        )
+
+        # 4. 运行 QueryEngine
+        engine = QueryEngine(config)
+
+        result_text = ""
+        errors = []
+
+        async def _run():
+            nonlocal result_text, errors
+            async for msg in engine.submit_message(task):
+                if msg.type == "assistant":
+                    # 不在此处流式输出 — query.py 的伪流式已处理
+                    # 仅记录最后一条助手消息用于结果提取
+                    pass
+                elif msg.type == "progress":
+                    # 工具执行进度
+                    data = msg.data
+                    if data.get("type") == "activity":
+                        desc = data.get("description", "")
+                        if desc:
+                            print(f"\n  [工具] {desc}", flush=True)
+                elif msg.type == "user":
+                    # 工具结果消息
+                    pass
+                elif msg.type == "result":
+                    if msg.is_error:
+                        errors.extend(msg.errors)
+                    result_text = msg.result or ""
+                    if not stream_callback and result_text:
+                        print()  # 换行
+
+        try:
+            asyncio.run(_run())
+        except RuntimeError:
+            # 已经在事件循环中 — 使用 nest_asyncio 或直接运行
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # 创建任务并等待
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, _run)
+                    future.result()
+            else:
+                loop.run_until_complete(_run())
+
+        # 5. 持久化记忆
+        if result_text and not errors:
+            self._persist_memory(task, result_text)
+
+        if errors and not result_text:
+            return f"任务失败: {'; '.join(errors)}"
+
+        return result_text
+
+    # ------------------------------------------------------------------
+    # 流式 ReAct 循环 (统一入口,支持蓝图注入 + 上下文管理 + 记忆)
+    # ------------------------------------------------------------------
+    def run_react_stream(
+        self,
+        task: str,
+        blueprint: Optional[Dict] = None,
+        max_steps: int = 9999,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        enable_context: bool = True,
+    ) -> str:
+        """流式 ReAct 循环 — 统一的推理执行入口。
+
+        集成 CEO 三层上下文管理 + 短期/长期记忆 + 蓝图注入 + 智能工具执行。
+        CEOEngine 和直接调用者均走此入口,消除双循环问题。
+
+        Args:
+            task: 用户任务描述
+            blueprint: Phase A 产出的 v1 蓝图 (可选)
+            max_steps: 最大推理步数 (默认 9999,仅硬停)
+            stream_callback: 流式输出回调 (chunk -> None)
+            enable_context: 是否启用上下文管理 (测试可关闭)
+
+        Returns:
+            最终答案字符串
+        """
+        # --- 观测性埋点 (懒加载) ---
+        from ..utils.observability import get_logger, get_metrics
+        log = get_logger("agent")
+        metrics = get_metrics()
+        log.info("react_stream_start", data={"task": task[:200], "max_steps": max_steps})
+        _steps_used = 0
+
+        # --- 初始化任务上下文 ---
+        if enable_context:
+            self.context_manager.add_essential(f"任务: {task}")
+        self.short_memory.add("user", task)
+
+        # MemoryManager 任务生命周期: 启动任务 + 召回相关长期记忆
+        if self.memory_manager is not None:
+            self.memory_manager.start_task(task)
+            # 召回与任务相关的长期记忆,注入工作记忆
+            try:
+                recalled = self.memory_manager.recall_to_working(task, top_k=3)
+                if recalled:
+                    self.context_manager.add_essential(
+                        f"相关记忆: {recalled}"
+                    )
+            except Exception:
+                pass
+
+        blueprint_text = ""
+        if blueprint:
+            bp = blueprint.get("blueprint", blueprint)
+            blueprint_text = self._format_blueprint(bp)
+
+        # --- 构建 system prompt ---
+        system_parts = []
+        if self.system_prompt:
+            system_parts.append(self.system_prompt)
+        if blueprint_text:
+            system_parts.append(f"\n## Phase A 蓝图\n{blueprint_text}")
+        if enable_context:
+            ctx = self.context_manager.build_context(token_budget=8000)
+            if ctx:
+                system_parts.append(f"\n## 上下文\n{ctx}")
+        # K2.4: 技能接入 ReAct —— 将技能描述注入 system prompt
+        if hasattr(self, "skills") and self.skills and hasattr(self.skills, "list_skills"):
+            try:
+                skill_list = self.skills.list_skills()
+                if skill_list:
+                    skill_desc = "\n".join(
+                        f"  - **{s['name']}**: {s.get('description', '')}"
+                        for s in skill_list)
+                    system_parts.append(
+                        f"\n## 可用技能\n以下技能可通过调用相应工具触发:\n{skill_desc}")
+            except Exception:
+                pass
+        system_prompt = "\n".join(system_parts)
+
+        messages = [{"role": "system", "content": system_prompt}]
+
+        # 载入短期记忆
+        for m in self.short_memory.to_messages():
+            messages.append(m)
+        messages.append({"role": "user", "content": task})
+
+        # --- ReAct 循环 ---
+        consecutive_errors = 0
+        max_consecutive_errors = 7
+
+        for step in range(1, max_steps + 1):
+            _steps_used = step
+            # 检查上下文是否需要压缩
+            if enable_context:
+                action = self.context_manager.decide_action()
+                # K5-H3: 修复条件写反——auto_offload_large_results 是 Offload 操作
+                # 应在 "offload" 或 "both" 时触发，而非 "compress"/"both"
+                if action in ("offload", "both"):
+                    self.context_manager.auto_offload_large_results()
+
+            # K2 修复：messages 随上下文管理同步截断
+            # 当 messages 超过阈值时，保留 system + 最近 N 条，防止 LLM 上下文窗口溢出
+            max_context_messages = 50
+            if len(messages) > max_context_messages:
+                system_msgs = [m for m in messages if m.get("role") == "system"]
+                non_system = [m for m in messages if m.get("role") != "system"]
+                keep = max_context_messages - len(system_msgs)
+                before = len(messages)
+                messages = system_msgs + non_system[-keep:]
+                log.info("context_truncated",
+                         data={"before": before,
+                               "after": len(messages), "step": step})
+
+            # 流式获取 LLM 响应
+            with metrics.timer("llm_latency", tags={"model": getattr(self.llm, "model", "unknown")}):
+                response = self._stream_llm_response(messages, stream_callback)
+            metrics.inc("llm_calls")
+
+            if not response.strip():
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    log.info("react_stream_end", data={"steps": _steps_used, "result_length": 0})
+                    metrics.gauge("react_steps", _steps_used)
+                    return "连续多次获得空响应,终止推理。"
+                messages.append({"role": "assistant", "content": "(空响应)"})
+                continue
+
+            self.short_memory.add("assistant", response)
+            if enable_context:
+                self.context_manager.add_message("assistant", response)
+
+            consecutive_errors = 0  # 重置错误计数
+
+            # 解析 Final Answer
+            final = self._parse_final_answer(response)
+            if final is not None:
+                if enable_context:
+                    self.context_manager.add_essential(f"Final Answer: {final}")
+                self._persist_memory(task, final)
+                # MemoryManager: 结束任务,保存到长期记忆
+                if self.memory_manager is not None:
+                    try:
+                        self.memory_manager.set_working("final_answer", final)
+                        self.memory_manager.end_task(save=True)
+                    except Exception:
+                        pass
+                log.info("react_stream_end", data={"steps": _steps_used, "result_length": len(final) if final else 0})
+                metrics.gauge("react_steps", _steps_used)
+                return final
+
+            # 解析 Action
+            action = self._parse_action(response)
+            if action is None:
+                # 无 Action 也无 Final Answer,视为最终答案
+                self._persist_memory(task, response)
+                if self.memory_manager is not None:
+                    try:
+                        self.memory_manager.end_task(save=True)
+                    except Exception:
+                        pass
+                log.info("react_stream_end", data={"steps": _steps_used, "result_length": len(response) if response else 0})
+                metrics.gauge("react_steps", _steps_used)
+                return response
+
+            tool_name = action["tool"]
+            args = action["args"]
+
+            # 智能解析参数
+            if isinstance(args, str):
+                args = self._parse_action_input(args)
+
+            # 执行工具
+            try:
+                with metrics.timer("tool_latency", tags={"tool": tool_name}):
+                    result = self._execute_tool(tool_name, args)
+            except Exception as e:
+                result = f"工具执行异常: {e}"
+                consecutive_errors += 1
+            # K5-缺陷7: 修复 metrics 状态误报——result 恒非空，用内容判定
+            _tool_ok = not any(kw in str(result) for kw in ("错误", "error", "异常", "Error"))
+            metrics.inc("tool_calls", tags={"tool": tool_name, "status": "success" if _tool_ok else "error"})
+            log.info("tool_executed", data={"tool": tool_name, "status": "success" if _tool_ok else "error"})
+
+            if enable_context:
+                self.context_manager.add_tool_record(tool_name, args, result)
+            self.short_memory.add("tool", result)
+
+            # MemoryManager: 存入工作记忆
+            if self.memory_manager is not None:
+                try:
+                    self.memory_manager.set_working(
+                        f"step_{step}_{tool_name}", result
+                    )
+                except Exception:
+                    pass
+
+            # 构建 Observation
+            obs = f"Observation: {result}"
+            messages.append({"role": "assistant", "content": response})
+            messages.append({"role": "user", "content": obs})
+
+            # 错误恢复
+            if "错误" in result or "error" in result.lower():
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    log.info("react_stream_end", data={"steps": _steps_used, "result_length": len(result) if result else 0})
+                    metrics.gauge("react_steps", _steps_used)
+                    return f"连续 {max_consecutive_errors} 次工具错误,终止推理。\n最后结果: {result}"
+                # 注入错误提示
+                messages.append({
+                    "role": "user",
+                    "content": f"提示: 上一步出现错误({result[:200]}),请尝试调整参数或换用其他工具。"
+                })
+            else:
+                consecutive_errors = 0
+
+        log.info("react_stream_end", data={"steps": _steps_used, "result_length": 0})
+        metrics.gauge("react_steps", _steps_used)
+        return f"已达到最大推理步数({max_steps}),任务未得出最终答案。"
+
+    def _stream_llm_response(
+        self,
+        messages: List[Dict],
+        stream_callback: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """获取 LLM 响应,支持流式回调。"""
+        if stream_callback and hasattr(self.llm, "stream_chat"):
+            chunks = []
+            for chunk in self.llm.stream_chat(messages):
+                chunks.append(chunk)
+                stream_callback(chunk)
+            return "".join(chunks)
+        return self.llm.chat(messages)
+
+    @staticmethod
+    def _format_blueprint(bp: Dict) -> str:
+        """格式化蓝图为可读文本。"""
+        lines = []
+        if "architecture" in bp:
+            lines.append(f"架构: {bp['architecture']}")
+        if "data_model" in bp:
+            lines.append(f"数据模型: {bp['data_model']}")
+        if "workflow_shape" in bp:
+            lines.append(f"工作流形态: {bp['workflow_shape']}")
+        if "key_principles" in bp:
+            lines.append("关键原理:")
+            for p in bp["key_principles"]:
+                lines.append(f"  - {p}")
+        if "risk_mitigations" in bp:
+            lines.append("风险缓解:")
+            for r in bp["risk_mitigations"]:
+                lines.append(f"  - {r}")
+        return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------
@@ -467,13 +1439,21 @@ def _load_physics_tools() -> List[Tool]:
 
 
 def _load_mcp_tools() -> List[Any]:
-    """lazy import MCP 工具模块，返回 BaseTool 实例列表（不可用则返回空）。"""
+    """lazy import MCP 工具模块，返回 BaseTool 实例列表（不可用则返回空）。
+
+    工具体系收敛后只加载统一桥接器:
+      - astro_dynamics_tool (AstroDynamicsMCPTool: 12 MCP 工具)
+    LoopEngineTool 已移除——八阶段编排由 run_fast() + BaseWorkflow 替代。
+    旧版单引擎工具 (orekit/gmat/spiceypy/astropy/basilisk/stk) 已由
+    AstroDynamicsMCPTool 统一桥接,不再单独加载,减少维护面。
+    """
     out: List[Any] = []
     try:
         import importlib  # noqa: WPS433
         from ..mcp_tools.base import BaseTool  # noqa: WPS433
-        for mod_name in ("astropy_tool", "gmat_tool", "orekit_tool",
-                         "spiceypy_tool"):
+
+        # 只加载统一桥接器 (AstroDynamicsMCPTool)
+        for mod_name in ("astro_dynamics_tool",):
             try:
                 mod = importlib.import_module(
                     f"aerospace_agent.mcp_tools.{mod_name}")
@@ -491,23 +1471,29 @@ def _load_mcp_tools() -> List[Any]:
                     except Exception:
                         continue
     except Exception:
-        # MCP 模块不可用时静默回退
         pass
     return out
 
 
 def create_default_agent(max_steps: int = 10,
-                         force_mock: bool = False) -> AerospaceAgent:
+                         force_mock: bool = False,
+                         use_local: bool = False,
+                         use_router: bool = False) -> AerospaceAgent:
     """工厂函数：自动装配所有默认组件。
 
     会 lazy import 物理模块、MCP 工具、工作流、RAG：
-      - 物理模块（aerospace_agent.physics）可用则注册 two_body_propagate 工具；
-      - MCP 工具（aerospace_agent.mcp_tools）可用则注册（含可用性检测）；
-      - 工作流/RAG 使用内置默认实现。
+      - LLM：默认 MockLLM；use_router=True 自动路由本地/云端；
+        use_local=True 或设置 AEROSPACE_LOCAL_LLM_BASE_URL 用本地小模型；
+      - MCP 工具：astro_dynamics_mcp 12 工具（LoopEngineTool 已移除）；
+      - BaseWorkflow：workflows/ 包的 5 个预定义工作流，run_fast() 优先匹配；
+      - RAG：AerospaceRAG（增强版，含 RetrieverRouter 多源路由 +
+        EvidenceVerifier 证据验证 + TraceabilityManager 溯源链）；
+      - 工作流/物理工具使用内置默认实现。
     所有外部模块均 lazy import，不可用时静默回退到内置实现。
     """
-    # 1. LLM（无 API key 时自动回退 MockLLM）
-    llm = create_llm(force_mock=force_mock)
+    # 1. LLM（无 API key 时自动回退 MockLLM；支持本地小模型 + 路由器）
+    llm = create_llm(force_mock=force_mock,
+                     use_local=use_local, use_router=use_router)
     # 2. 上下文管理器
     ctx = ContextManager()
     # 3. 记忆
@@ -522,17 +1508,104 @@ def create_default_agent(max_steps: int = 10,
         llm=llm, context_manager=ctx, memory=memory,
         tools=tools, workflows=workflows, max_steps=max_steps,
     )
-    # 7. lazy 加载 MCP 工具
+    # 7. lazy 加载 MCP 工具（astro_dynamics 12 工具，LoopEngineTool 已移除）
     for bt in _load_mcp_tools():
         agent.register_mcp_tool(bt)
-    # 8. 挂载增强 RAG（向量库 + 关键词 + 知识图谱 + 文献管线 + 知识云图）
+    # 7.5 注册 BaseWorkflow 实例（workflows/ 包的 5 个预定义工作流）
+    #     这些工作流支持 execute() 直接执行，run_fast() 优先匹配并调用
+    try:
+        from ..workflows.registry import default_workflow_registry
+        for wf_name, wf_instance in default_workflow_registry.list_all().items():
+            agent.register_base_workflow(wf_instance)
+    except Exception as exc:
+        _logger.warning("步骤7.5 BaseWorkflow 注册失败: %s", exc)
+    # 8. 挂载增强 RAG（向量库 + 关键词 + 知识图谱 + 文献管线 + 知识云图
+    #    + RetrieverRouter 多源路由 + EvidenceVerifier 证据验证 + Traceability 溯源）
     try:
         from ..rag.aerospace_rag import AerospaceRAG
         agent.rag = AerospaceRAG()
+        # K2.5: 注册多源检索器——记忆源 + 代码源
+        # 记忆检索源：将 LongTermMemory.recall 包装为 (query, top_k) -> [(score, text, meta)]
+        def _memory_retriever(query: str, top_k: int = 5):
+            results = memory.recall(query, top_k=top_k)
+            return [
+                (sim, str(val)[:500], {"key": key, "source_type": "memory"})
+                for key, sim, val in results
+            ]
+        agent.rag.register_memory_retriever(_memory_retriever)
+
+        # 代码检索源：搜索项目源码中匹配的函数/类/注释
+        def _code_retriever(query: str, top_k: int = 5):
+            import ast as _ast
+            import glob as _glob
+            import os as _os
+            # 限定搜索范围：aerospace_agent 包目录
+            pkg_dir = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            py_files = _glob.glob(_os.path.join(pkg_dir, "**", "*.py"), recursive=True)
+            scored = []
+            query_lower = query.lower()
+            for fpath in py_files:
+                try:
+                    with open(fpath, encoding="utf-8", errors="ignore") as f:
+                        source = f.read()
+                    tree = _ast.parse(source)
+                except Exception:
+                    continue
+                rel_path = _os.path.relpath(fpath, pkg_dir)
+                for node in _ast.walk(tree):
+                    if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+                        name = node.name
+                        docstring = _ast.get_docstring(node) or ""
+                        # 简单关键词匹配
+                        score = 0.0
+                        for word in query_lower.split():
+                            if len(word) > 1:
+                                if word in name.lower():
+                                    score += 2.0
+                                if word in docstring.lower():
+                                    score += 1.0
+                        for kw in query.split():
+                            if len(kw) > 1:
+                                if kw in name:
+                                    score += 0.3
+                        if score > 0:
+                            snippet = f"def {name}(...)" if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)) else f"class {name}"
+                            scored.append((
+                                score,
+                                f"{rel_path}:{node.lineno} {snippet}\n{docstring[:200]}",
+                                {"file": rel_path, "line": node.lineno,
+                                 "source_type": "code"},
+                            ))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return scored[:top_k]
+        agent.rag.register_code_retriever(_code_retriever)
     except Exception:
         # 回退到简易 RAG
         agent.rag = SimpleRAG(memory)
-    # 9. 注册文献搜索工具（让 Agent 在 ReAct 循环中可调用）
+    # 9. 挂载 Skill 注册表（自动发现所有内置 Skill）
+    try:
+        from ..skills import SkillRegistry
+        agent.skills = SkillRegistry()
+        agent.skills.auto_discover()
+    except Exception as exc:
+        _logger.warning("步骤9 SkillRegistry 挂载失败: %s", exc)
+    # 9.5 挂载 MemoryManager (统一管理三层记忆,接入主流程)
+    try:
+        agent.memory_manager = MemoryManager(
+            long_term_path=str(memory.path) if hasattr(memory, 'path') else None,
+        )
+        # 让 MemoryManager 共享已有的 LongTermMemory
+        agent.memory_manager.long_term = memory
+    except Exception as exc:
+        _logger.warning("步骤9.5 MemoryManager 挂载失败: %s", exc)
+    # 10. 挂载 Prompt 模板
+    try:
+        from ..prompts import SYSTEM_PROMPT, get_prompt
+        agent.prompt_template = get_prompt
+        agent.system_prompt = SYSTEM_PROMPT
+    except Exception as exc:
+        _logger.warning("步骤10 Prompt 模板挂载失败: %s", exc)
+    # 11. 注册文献搜索工具（让 Agent 在 ReAct 循环中可调用）
     try:
         def _literature_search(query: str, topic: str = "", max_results: int = 5) -> str:
             """搜索最新航天文献，评估相关性，下载强相关论文并总结。"""
@@ -562,6 +1635,50 @@ def create_default_agent(max_steps: int = 10,
             "搜索最新航天文献(query, topic, max_results)：评估相关性、下载强相关 PDF、总结全文、更新知识图谱",
             _literature_search,
         ))
-    except Exception:
-        pass
+    except Exception as exc:
+        _logger.warning("步骤11 文献搜索工具注册失败: %s", exc)
+
+    # 12. 注册 105 个科研工具（research_tools 包）
+    #     10 个域 × 10-15 个原子操作 = 最小生成集
+    #     支持自进化：工具不存在时 Agent 可用 create_tool 动态创建
+    try:
+        from ..research_tools import (
+            get_registry as _get_rt_registry,
+            get_all_schemas as _get_rt_schemas,
+        )
+        _rt_registry = _get_rt_registry()
+        for tool_name in _rt_registry.list_all():
+            rt = _rt_registry.get(tool_name)
+            if rt is None:
+                continue
+            # 包装为 Agent Tool（统一接口）
+            def _make_rt_caller(name):
+                def _caller(**kwargs):
+                    return _get_rt_registry().call(name, **kwargs)
+                _caller.__name__ = f"rt_{name}"
+                return _caller
+            agent.register_tool(Tool(
+                tool_name,
+                rt.to_schema(),
+                _make_rt_caller(tool_name),
+            ))
+        _logger.info("步骤12: 注册 %d 个科研工具", _rt_registry.count())
+
+        # 13. 构建工具向量索引——语义检索 top-K 工具，替代全量注入
+        #     105 个工具全量注入 ~2015 tokens → top-8 精选 ~300 tokens
+        try:
+            import os as _os
+            from ..research_tools.tool_index import ToolVectorIndex
+            _idx_path = _os.path.join(_os.getcwd(), "data", "tool_index.npz")
+            agent.tool_index = ToolVectorIndex(persist_path=_idx_path)
+            if not agent.tool_index.is_built:
+                agent.tool_index.build_from_registry(_rt_registry)
+            _logger.info("步骤13: 工具向量索引构建完成 (%d 个工具)",
+                         agent.tool_index.get_stats()["total_tools"])
+        except Exception as exc:
+            _logger.warning("步骤13 工具向量索引构建失败: %s", exc)
+
+    except Exception as exc:
+        _logger.warning("步骤12 科研工具注册失败: %s", exc)
+
     return agent

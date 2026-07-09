@@ -1,0 +1,123 @@
+# 交叉验证工作流——Orekit vs GMAT 轨道传播结果对比
+# 高保真力学模型（20阶球谐 + 阻力 + SRP + 三体），位置误差阈值 100 m
+id: cross_validate_orekit_gmat
+goal: 交叉验证 Orekit 与 GMAT 轨道传播结果，确保位置误差小于 100 m
+task_type: validation
+inputs:
+  initial_state:
+    epoch:
+      value: "2026-01-01T00:00:00"
+      scale: UTC
+      format: ISO
+    frame:
+      name: GCRF
+      center: Earth
+      realization: IERS2010
+    representation: cartesian
+    position_m: [6771000.0, 0.0, 0.0]
+    velocity_mps: [0.0, 7690.0, 0.0]
+  duration_s: 86400.0                        # 1 天传播
+  output_step_s: 300.0                       # 5 分钟采样
+models:
+  force_model:
+    central_body: Earth
+    gravity: spherical_harmonics
+    degree: 20
+    order: 20
+    drag:
+      enabled: true
+      atmosphere: NRLMSISE00
+      cd: 2.2
+      area_m2: 1.0
+      mass_kg: 100.0
+    srp:
+      enabled: true
+      cr: 1.3
+      area_m2: 1.0
+    third_body:
+      - name: Sun
+      - name: Moon
+    relativity: false
+  spacecraft:
+    name: xval_sat
+    mass_kg: 100.0
+    drag_area_m2: 1.0
+    srp_area_m2: 1.0
+    cd: 2.2
+    cr: 1.3
+engine: auto
+steps:
+  - name: Orekit传播
+    tool: propagate_orbit
+    inputs:
+      initial_state_dict: "${inputs.initial_state}"
+      force_model_dict: "${models.force_model}"
+      duration_s: "${inputs.duration_s}"
+      output_step_s: "${inputs.output_step_s}"
+      engine: orekit
+    outputs:
+      - orekit_state_history
+    description: 使用 Orekit 引擎传播，作为参考解
+  - name: GMAT传播
+    tool: propagate_orbit
+    inputs:
+      initial_state_dict: "${inputs.initial_state}"
+      force_model_dict: "${models.force_model}"
+      duration_s: "${inputs.duration_s}"
+      output_step_s: "${inputs.output_step_s}"
+      engine: gmat
+    outputs:
+      - gmat_state_history
+    description: 使用 GMAT 引擎传播，作为待验证解
+  - name: 交叉验证
+    tool: cross_validate_results
+    inputs:
+      task_spec:
+        initial_state: "${inputs.initial_state}"
+        force_model: "${models.force_model}"
+        duration_s: "${inputs.duration_s}"
+        output_step_s: "${inputs.output_step_s}"
+      existing_results:
+        reference: "${steps.Orekit传播.outputs.orekit_state_history}"
+        candidate: "${steps.GMAT传播.outputs.gmat_state_history}"
+      thresholds:
+        position_error_m: 100.0
+        velocity_error_mps: 0.1
+    outputs:
+      - validation_report
+    description: 逐时刻对比两引擎结果，生成验证报告
+outputs:
+  orekit_state_history: list[OrbitState]
+  gmat_state_history: list[OrbitState]
+  validation_report: ValidationReport
+validation:
+  position_error:
+    enabled: true
+    threshold_m: 100.0
+    description: 位置误差必须小于 100 m
+  velocity_error:
+    enabled: true
+    threshold_mps: 0.1
+    description: 速度误差必须小于 0.1 m/s
+  frame_consistency:
+    enabled: true
+    expected_frame: GCRF
+    description: 两引擎输出坐标系必须一致（均为 GCRF）
+  timestamp_alignment:
+    enabled: true
+    tolerance_s: 1.0
+    description: 两序列时间戳对齐，容差 1s
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: 某引擎不可用时回退解析，并降低验证可信度
+  on_validation_fail:
+    action: retry
+    max_retries: 1
+    adjust: increase_harmonics
+    description: 误差超限时提高球谐阶次或统一积分器后重试
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [cross_validation, orekit, gmat]

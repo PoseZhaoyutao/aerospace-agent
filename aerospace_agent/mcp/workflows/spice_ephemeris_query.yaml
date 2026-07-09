@@ -1,0 +1,83 @@
+# SPICE 星历查询工作流——获取月球相对地球的状态
+# 依赖 SPICE 内核：闰秒内核 + 行星星历 + 地球参考系
+id: spice_ephemeris_query
+goal: 使用 SPICE 查询月球相对地球的星历状态
+task_type: ephemeris
+inputs:
+  target: Moon
+  observer: Earth
+  frame: GCRF
+  epoch:
+    value: "2026-01-01T00:00:00"
+    scale: UTC
+    format: ISO
+  ab_correction: NONE
+models:
+  kernels:
+    - name: naif0012.tls
+      kernel_type: lsk
+      description: 闰秒内核
+    - name: de440s.bsp
+      kernel_type: spk
+      description: JPL DE440s 行星星历
+    - name: earth_000101_240101_240724.tf
+      kernel_type: fk
+      description: 地球参考系内核
+engine: spiceypy
+steps:
+  # TODO: 工具 load_kernels 未实现，暂时跳过该步骤
+  #       query_ephemeris_state 已内置 kernel 加载（通过 kernels 参数或 SPICE_KERNELS 环境变量）
+  # - name: 加载内核
+  #   tool: load_kernels
+  #   inputs:
+  #     kernels: "${models.kernels}"
+  #   outputs:
+  #     - kernel_loaded
+  #   description: 按顺序加载闰秒、行星星历、地球参考系内核（lsk 必须最先）
+  - name: 查询星历状态
+    tool: query_ephemeris_state
+    inputs:
+      target: "${inputs.target}"
+      observer: "${inputs.observer}"
+      epoch_dict: "${inputs.epoch}"
+      frame: "${inputs.frame}"
+      aberration_correction: "${inputs.ab_correction}"
+    outputs:
+      - ephemeris_state
+    description: 查询月球相对地球在 GCRF 系下的位置速度
+outputs:
+  ephemeris_state: OrbitState
+  kernel_loaded: bool
+validation:
+  distance_reasonable:
+    enabled: true
+    min_distance_m: 3.5e8
+    max_distance_m: 4.1e8
+    description: 地月距离应在 35 万~41 万 km 之间
+  frame_consistency:
+    enabled: true
+    expected_frame: GCRF
+    description: 输出坐标系必须为 GCRF
+  velocity_reasonable:
+    enabled: true
+    min_velocity_mps: 800.0
+    max_velocity_mps: 1200.0
+    description: 月球相对地球速度约 1 km/s 量级
+failure_handling:
+  on_engine_unavailable:
+    action: fallback
+    fallback_engine: analytical
+    description: SPICE 不可用时回退到解析星历（精度降低）
+  on_kernel_missing:
+    action: error
+    message: "缺少必要内核文件，请检查 KernelRegistry"
+    description: 内核缺失无法回退，直接报错
+  on_validation_fail:
+    action: retry
+    max_retries: 1
+    adjust: refresh_kernels
+    description: 距离异常时刷新内核数据重试
+metadata:
+  author: aerospace-agent
+  version: "1.0"
+  tags: [SPICE, Moon, ephemeris]

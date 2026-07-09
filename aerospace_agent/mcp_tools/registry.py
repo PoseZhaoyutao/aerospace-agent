@@ -15,6 +15,7 @@ from .spiceypy_tool import SpiceypyTool
 from .astropy_tool import AstropyTool
 from .basilisk_tool import BasiliskTool
 from .stk_tool import StkTool
+from .astro_dynamics_tool import AstroDynamicsMCPTool
 
 # 所有工具类（按规范顺序）
 _ALL_TOOL_CLASSES = [
@@ -24,6 +25,7 @@ _ALL_TOOL_CLASSES = [
     AstropyTool,
     BasiliskTool,
     StkTool,
+    AstroDynamicsMCPTool,
 ]
 
 
