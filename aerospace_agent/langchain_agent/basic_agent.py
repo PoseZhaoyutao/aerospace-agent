@@ -36,6 +36,10 @@ class BasicAgentConfig:
     output_dir: str = "demo_output"
     max_output_tokens: int = 1024
     temperature: float = 0.2
+    memory_window_messages: int = 12
+    memory_max_chars: int = 12000
+    rag_top_k: int = 3
+    enable_rag_context: bool = True
 
 
 @dataclass
@@ -50,6 +54,45 @@ class BasicAgentResult:
 
     def to_text(self) -> str:
         return self.output
+
+
+@dataclass
+class SlidingWindowMemory:
+    """In-memory conversation window for the basic LangChain path."""
+
+    max_messages: int = 12
+    max_chars: int = 12000
+    messages: List[Dict[str, str]] = field(default_factory=list)
+
+    def add(self, role: str, content: str) -> None:
+        if role not in {"user", "assistant", "system"}:
+            raise ValueError(f"unsupported memory role: {role}")
+        self.messages.append({"role": role, "content": str(content)})
+        self._trim()
+
+    def clear(self) -> None:
+        self.messages.clear()
+
+    def to_messages(self) -> List[Dict[str, str]]:
+        self._trim()
+        return [dict(message) for message in self.messages]
+
+    def _trim(self) -> None:
+        if self.max_messages > 0 and len(self.messages) > self.max_messages:
+            self.messages = self.messages[-self.max_messages:]
+
+        if self.max_chars <= 0:
+            return
+
+        total = 0
+        kept: List[Dict[str, str]] = []
+        for message in reversed(self.messages):
+            size = len(message.get("content", ""))
+            if kept and total + size > self.max_chars:
+                break
+            kept.append(message)
+            total += size
+        self.messages = list(reversed(kept))
 
 
 def _workspace_path(path: str, workspace: Path) -> Path:
@@ -102,10 +145,43 @@ def _tool_catalog() -> List[Dict[str, str]]:
             "name": "list_basic_tools",
             "description": "Return the minimal built-in tool catalog.",
         },
+        {
+            "name": "list_mcp_tools",
+            "description": "List tools exposed by the base MCP tool registry.",
+        },
+        {
+            "name": "call_mcp_tool",
+            "description": "Call a method on a base MCP tool by name.",
+        },
     ]
 
 
-def build_basic_tools(workspace: Optional[Path] = None) -> List[BasicTool]:
+def _resolve_mcp_tools(mcp_tools: Optional[Any] = None) -> Dict[str, Any]:
+    if mcp_tools is None:
+        try:
+            from aerospace_agent.mcp_tools.registry import list_tools
+        except Exception:
+            return {}
+        try:
+            return dict(list_tools())
+        except Exception:
+            return {}
+
+    if isinstance(mcp_tools, dict):
+        return dict(mcp_tools)
+
+    resolved: Dict[str, Any] = {}
+    for tool in mcp_tools:
+        name = getattr(tool, "name", None)
+        if name:
+            resolved[name] = tool
+    return resolved
+
+
+def build_basic_tools(
+    workspace: Optional[Path] = None,
+    mcp_tools: Optional[Any] = None,
+) -> List[BasicTool]:
     workspace = (workspace or Path.cwd()).resolve()
 
     def _write_text_file(path: str, content: str) -> Dict[str, Any]:
@@ -113,6 +189,80 @@ def build_basic_tools(workspace: Optional[Path] = None) -> List[BasicTool]:
 
     def _list_basic_tools() -> Dict[str, Any]:
         return {"status": "ok", "tools": _tool_catalog()}
+
+    def _list_mcp_tools() -> Dict[str, Any]:
+        tools = _resolve_mcp_tools(mcp_tools)
+        return {
+            "status": "ok",
+            "tools": [
+                (
+                    tool.get_info()
+                    if hasattr(tool, "get_info")
+                    else {
+                        "name": name,
+                        "description": getattr(tool, "description", ""),
+                        "source": getattr(tool, "source", "unknown"),
+                        "methods": (
+                            tool.list_methods()
+                            if hasattr(tool, "list_methods")
+                            else list(getattr(tool, "methods_schema", {}).keys())
+                        ),
+                    }
+                )
+                for name, tool in tools.items()
+            ],
+        }
+
+    def _call_mcp_tool(
+        name: str,
+        method: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        tools = _resolve_mcp_tools(mcp_tools)
+        tool = tools.get(name)
+        if tool is None:
+            return {
+                "status": "error",
+                "error_code": "MCP_TOOL_NOT_FOUND",
+                "tool": name,
+                "available": list(tools.keys()),
+            }
+        if not method:
+            return {
+                "status": "error",
+                "error_code": "MISSING_METHOD",
+                "tool": name,
+                "methods": (
+                    tool.list_methods()
+                    if hasattr(tool, "list_methods")
+                    else list(getattr(tool, "methods_schema", {}).keys())
+                ),
+            }
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return {
+                "status": "error",
+                "error_code": "INVALID_ARGUMENTS",
+                "tool": name,
+                "method": method,
+            }
+        try:
+            result = tool.call(method, **arguments)
+        except Exception as exc:
+            return {
+                "status": "error",
+                "error_code": "MCP_CALL_FAILED",
+                "tool": name,
+                "method": method,
+                "error": str(exc),
+            }
+        return {
+            "status": "ok",
+            "tool": name,
+            "method": method,
+            "result": result,
+        }
 
     return [
         BasicTool(
@@ -125,10 +275,23 @@ def build_basic_tools(workspace: Optional[Path] = None) -> List[BasicTool]:
             description="Return the minimal built-in tool catalog.",
             func=_list_basic_tools,
         ),
+        BasicTool(
+            name="list_mcp_tools",
+            description="List tools exposed by the base MCP tool registry.",
+            func=_list_mcp_tools,
+        ),
+        BasicTool(
+            name="call_mcp_tool",
+            description="Call a method on a base MCP tool by name.",
+            func=_call_mcp_tool,
+        ),
     ]
 
 
-def build_langchain_tools(workspace: Optional[Path] = None) -> List[Any]:
+def build_langchain_tools(
+    workspace: Optional[Path] = None,
+    mcp_tools: Optional[Any] = None,
+) -> List[Any]:
     """Build LangChain StructuredTool objects when langchain-core exists."""
     try:
         from langchain_core.tools import StructuredTool
@@ -136,7 +299,7 @@ def build_langchain_tools(workspace: Optional[Path] = None) -> List[Any]:
         return []
 
     lc_tools = []
-    for tool in build_basic_tools(workspace):
+    for tool in build_basic_tools(workspace, mcp_tools=mcp_tools):
 
         def _run(_tool: BasicTool = tool, **kwargs: Any) -> str:
             return json.dumps(_tool.invoke(kwargs), ensure_ascii=False, default=str)
@@ -174,20 +337,48 @@ class BasicLangChainAgent:
         llm: Any,
         workspace: Optional[Path] = None,
         config: Optional[BasicAgentConfig] = None,
+        memory: Optional[SlidingWindowMemory] = None,
+        rag: Optional[Any] = None,
+        mcp_tools: Optional[Any] = None,
     ) -> None:
         self.llm = llm
         self.workspace = (workspace or Path.cwd()).resolve()
         self.config = config or BasicAgentConfig()
-        self.tools = build_basic_tools(self.workspace)
-        self.langchain_tools = build_langchain_tools(self.workspace)
+        self.memory = memory or SlidingWindowMemory(
+            max_messages=self.config.memory_window_messages,
+            max_chars=self.config.memory_max_chars,
+        )
+        self.rag = rag
+        self.mcp_tools = mcp_tools
+        self.tools = build_basic_tools(self.workspace, mcp_tools=self.mcp_tools)
+        self.langchain_tools = build_langchain_tools(
+            self.workspace,
+            mcp_tools=self.mcp_tools,
+        )
         self.backend = "langchain-core" if self.langchain_tools else "builtin"
         self._runnable = _langchain_runnable(self._call_llm_once)
 
     def invoke(self, task: str) -> BasicAgentResult:
         task = task.strip()
         if self._is_static_site_request(task):
-            return self._write_static_site(task)
+            result = self._write_static_site(task)
+            self._remember(task, result.output)
+            return result
         return self._llm_once(task)
+
+    def set_interfaces(
+        self,
+        rag: Optional[Any] = None,
+        mcp_tools: Optional[Any] = None,
+    ) -> None:
+        self.rag = rag
+        self.mcp_tools = mcp_tools
+        self.tools = build_basic_tools(self.workspace, mcp_tools=self.mcp_tools)
+        self.langchain_tools = build_langchain_tools(
+            self.workspace,
+            mcp_tools=self.mcp_tools,
+        )
+        self.backend = "langchain-core" if self.langchain_tools else "builtin"
 
     @staticmethod
     def _is_static_site_request(task: str) -> bool:
@@ -251,25 +442,17 @@ class BasicLangChainAgent:
                 errors=[str(exc)],
             )
 
-        return BasicAgentResult(
+        result = BasicAgentResult(
             ok=True,
             output=str(output),
             action="llm_once",
             backend=self.backend,
         )
+        self._remember(task, result.output)
+        return result
 
     def _call_llm_once(self, task: str) -> str:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是严格、务实的航天软件研究助理。"
-                    "只做一次回答，不使用递归工具循环。"
-                    "没有证据的内容必须标注为假设。"
-                ),
-            },
-            {"role": "user", "content": task},
-        ]
+        messages = self._build_messages(task)
         if hasattr(self.llm, "chat"):
             return str(
                 self.llm.chat(
@@ -281,6 +464,76 @@ class BasicLangChainAgent:
         if callable(self.llm):
             return str(self.llm(messages))
         raise RuntimeError("LLM_UNAVAILABLE")
+
+    def _build_messages(self, task: str) -> List[Dict[str, str]]:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是严格、务实的航天软件研究助理。"
+                    "只做一次回答，不使用递归工具循环。"
+                    "没有证据的内容必须标注为假设。"
+                ),
+            },
+        ]
+        rag_context = self._rag_context(task)
+        if rag_context:
+            messages.append({
+                "role": "system",
+                "content": "RAG context (unverified evidence, not a conclusion):\n" + rag_context,
+            })
+        messages.extend(self.memory.to_messages())
+        messages.append({"role": "user", "content": task})
+        return messages
+
+    def _remember(self, task: str, output: str) -> None:
+        self.memory.add("user", task)
+        self.memory.add("assistant", output)
+
+    def _rag_context(self, task: str) -> str:
+        if not self.config.enable_rag_context or self.rag is None:
+            return ""
+
+        for method_name in ("retrieve", "search", "recall"):
+            method = getattr(self.rag, method_name, None)
+            if method is None:
+                continue
+            try:
+                try:
+                    result = method(task, top_k=self.config.rag_top_k)
+                except TypeError:
+                    result = method(task)
+            except Exception:
+                continue
+            return self._format_rag_result(result)
+        return ""
+
+    @staticmethod
+    def _format_rag_result(result: Any) -> str:
+        if result is None:
+            return ""
+        if isinstance(result, str):
+            return result[:4000]
+        if isinstance(result, dict):
+            for key in ("text", "content", "result", "answer"):
+                if key in result:
+                    return str(result[key])[:4000]
+            return json.dumps(result, ensure_ascii=False, default=str)[:4000]
+        if isinstance(result, list):
+            lines = []
+            for item in result[:5]:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content") or item.get("result")
+                    source = item.get("source") or item.get("path") or item.get("id")
+                    if text:
+                        prefix = f"[{source}] " if source else ""
+                        lines.append(prefix + str(text))
+                    else:
+                        lines.append(json.dumps(item, ensure_ascii=False, default=str))
+                else:
+                    lines.append(str(item))
+            return "\n".join(lines)[:4000]
+        return str(result)[:4000]
 
     def _tool(self, name: str) -> BasicTool:
         for tool in self.tools:
@@ -395,5 +648,15 @@ def create_basic_langchain_agent(
     llm: Any,
     workspace: Optional[Path] = None,
     config: Optional[BasicAgentConfig] = None,
+    memory: Optional[SlidingWindowMemory] = None,
+    rag: Optional[Any] = None,
+    mcp_tools: Optional[Any] = None,
 ) -> BasicLangChainAgent:
-    return BasicLangChainAgent(llm=llm, workspace=workspace, config=config)
+    return BasicLangChainAgent(
+        llm=llm,
+        workspace=workspace,
+        config=config,
+        memory=memory,
+        rag=rag,
+        mcp_tools=mcp_tools,
+    )

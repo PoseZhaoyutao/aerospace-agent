@@ -9,6 +9,8 @@ __pycache__/
 /demo_outputs/*.png
 /demo_output/
 /.test_runs/
+/aerospace_agent/langchain_agent/react_agent.py
+/aerospace_agent/langchain_agent/react_parser.py
 
 # 环境与密钥
 .env

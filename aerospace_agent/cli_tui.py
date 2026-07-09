@@ -1,10 +1,9 @@
-"""aerospace-agent CLI 交互终端（CodeWhale 风格 + CEO 驱动）。
+"""aerospace-agent CLI 交互终端（LangChain 基础 Agent）。
 
-核心设计（借鉴 CodeWhale + LoopRecursive-CEO）：
-    1. CEO Phase A：FirstPrinciplesAnalyzer 递归 Top-K 决策，实时显示分析过程
-    2. CEO Phase B：基于蓝图的无限步长 ReAct 循环，直到编排出初版
-    3. 流式思考：LLM 输出逐字显示，边思考边工作
-    4. CodeWhale 风格布局：Header → Transcript → Footer → Composer
+核心设计：
+    1. LangChain 基础入口：短上下文、滑动窗口记忆、非递归工具路径
+    2. 保留 RAG / MCP 接口，但不把旧 ReAct/fast/CEO 模式暴露给用户
+    3. CodeWhale 风格布局：Header → Transcript → Footer → Composer
 
 用法::
     python -m aerospace_agent.cli_tui              # 默认连接 Qwen3
@@ -176,7 +175,7 @@ class AppState:
     """
     # 运行控制
     running: bool = True
-    mode: str = "langchain"    # langchain | fast | ceo | react | chat
+    mode: str = "langchain"    # only langchain is exposed
     stream: bool = True         # 流式输出开关
     # 对话历史
     messages: List[Dict[str, str]] = field(default_factory=list)
@@ -233,7 +232,7 @@ def update(msg: Msg, state: AppState) -> AppState:
         new_state.stats.finish(success=False)
 
     elif msg.type == MsgType.MODE_CHANGE:
-        new_state.mode = msg.payload.get("mode", "ceo")
+        new_state.mode = msg.payload.get("mode", "langchain")
 
     elif msg.type == MsgType.STREAM_TOGGLE:
         new_state.stream = not new_state.stream
@@ -265,7 +264,7 @@ class CEOEngine:
     """
 
     def __init__(self, llm, agent, console: Console, stats: Stats,
-                 mode: str = "ceo", stream: bool = True,
+                 mode: str = "langchain", stream: bool = True,
                  perm_checker=None):
         self.llm = llm
         self.agent = agent
@@ -465,34 +464,13 @@ class CEOEngine:
     def execute(self, task: str) -> str:
         """根据当前模式执行任务。"""
         self.stats.begin()
-        max_steps = int(os.environ.get("AEROSPACE_REACT_MAX_STEPS", "20"))
-
-        if self.mode == "chat":
-            result = self.run_chat(task)
-        elif self.mode == "langchain":
-            # LangChain 基础入口：少工具、单次调用、确定性文件任务直执行
-            result = self.agent.run_langchain_react(
-                task,
-                max_steps=max_steps,
-                stream_callback=lambda chunk: sys.stdout.write(chunk) if self.stream else None,
-            )
-        elif self.mode == "fast":
-            # 快速模式：QueryEngine 驱动（1:1 复刻 CCB 架构）
-            # 回退到 run_fast（工作流匹配 + 精简 ReAct）
-            if hasattr(self.agent, 'run_query_engine'):
-                result = self.agent.run_query_engine(
-                    task,
-                    stream_callback=lambda chunk: sys.stdout.write(chunk) if self.stream else None,
-                )
-            else:
-                result = self.agent.run_fast(task)
-        elif self.mode == "react":
-            # 纯 ReAct 模式，跳过 Phase A
-            result = self.run_phase_b(task)
-        else:
-            # CEO 模式：Phase A + Phase B
-            self.run_phase_a(task)
-            result = self.run_phase_b(task)
+        stream_callback = (
+            (lambda chunk: sys.stdout.write(chunk)) if self.stream else None
+        )
+        result = self.agent.run_langchain(
+            task,
+            stream_callback=stream_callback,
+        )
 
         success = bool(result) and "失败" not in result
         self.stats.finish(success)
@@ -720,11 +698,7 @@ class CLITerminal:
         所有状态变更通过 update() 函数，便于追踪和测试。
         """
         mode_desc = {
-            "fast": "快速模式（优先工作流直执行，回退精简ReAct）",
-            "ceo": "CEO 模式（第一性原理 + Top-K + 无限步长）",
-            "react": "ReAct 模式（跳过分析，直接循环）",
-            "chat": "聊天模式（纯流式对话）",
-            "langchain": "LangChain 基础模式（少工具、短上下文、非递归）",
+            "langchain": "LangChain 基础模式（滑动窗口记忆 + RAG/MCP 接口）",
         }
         self._view_header_banner(mode_desc)
 
@@ -785,7 +759,7 @@ class CLITerminal:
             f"[bold yellow]{mode_desc.get(self.state.mode, self.state.mode)}[/bold yellow]\n"
             f"模型: [green]{self.llm_name}[/green]  "
             f"流式: [{'green' if self.state.stream else 'red'}]{'开' if self.state.stream else '关'}[/{'green' if self.state.stream else 'red'}]\n"
-            f"输入任务开始，或 /help 查看命令，/mode 切换模式",
+            f"输入任务开始，或 /help 查看命令",
             border_style="blue",
         ))
 
@@ -809,23 +783,18 @@ class CLITerminal:
         elif command == "/mode":
             if len(parts) > 1:
                 m = parts[1].strip().lower()
-                if m in ("fast", "ceo", "react", "chat", "langchain"):
+                if m == "langchain":
                     self.state = update(
                         Msg(MsgType.MODE_CHANGE, {"mode": m}), self.state)
-                    desc = {"fast": "快速模式（优先工作流直执行，回退精简ReAct）",
-                            "ceo": "CEO 模式（第一性原理 + Top-K + 无限步长）",
-                            "react": "ReAct 模式（跳过分析，直接循环）",
-                            "chat": "聊天模式（纯流式对话）",
-                            "langchain": "LangChain 基础模式（少工具、短上下文、非递归）"}
                     self.console.print(
-                        f"[green]OK 模式切换: {desc[m]}[/green]")
+                        "[green]OK 当前仅保留 LangChain 基础模式[/green]")
                 else:
                     self.console.print(
-                        f"[red]未知模式: {m}（可选: fast/ceo/react/chat/langchain）[/red]")
+                        f"[red]未知模式: {m}（当前仅支持: langchain）[/red]")
             else:
                 self.console.print(
                     f"[cyan]当前模式: {self.state.mode}[/cyan]\n"
-                    f"[dim]可选: fast / ceo / react / chat / langchain[/dim]")
+                    f"[dim]当前仅支持: langchain[/dim]")
 
         elif command == "/stream":
             self.state = update(Msg(MsgType.STREAM_TOGGLE), self.state)
@@ -856,7 +825,7 @@ class CLITerminal:
         t = Table(title="命令", show_header=True, box=box.ROUNDED)
         t.add_column("命令", style="cyan", width=12)
         t.add_column("说明", style="white")
-        for c, d in [("/help", "显示帮助"), ("/mode", "切换模式 (fast/ceo/react/chat/langchain)"),
+        for c, d in [("/help", "显示帮助"), ("/mode", "查看当前模式"),
                      ("/stream", "切换流式输出 (开/关)"),
                      ("/perm", "文件夹权限 (ask/auto/none)"),
                      ("/tools", "工具列表"),

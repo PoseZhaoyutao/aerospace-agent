@@ -236,6 +236,7 @@ class AerospaceAgent:
         self.rag: Optional[SimpleRAG] = None
         # K5-H1: 初始化 system_prompt 属性，防止非工厂构造时 AttributeError
         self.system_prompt: Optional[str] = None
+        self._basic_langchain_agent: Optional[Any] = None
         # 上下文窗口管理：token 预算与工具结果截断
         # max_context_tokens: 模型上下文窗口大小（默认 8192，适配大多数本地 vLLM 部署）
         #   可通过环境变量 AEROSPACE_MAX_CONTEXT_TOKENS 覆盖
@@ -931,7 +932,7 @@ class AerospaceAgent:
     # ------------------------------------------------------------------
     # LangChain Agent 循环 —— 基于 langchain-core 的标准化 ReAct
     # ------------------------------------------------------------------
-    def run_langchain_react(
+    def run_langchain(
         self,
         task: str,
         max_steps: int = 20,
@@ -950,12 +951,21 @@ class AerospaceAgent:
         except Exception as exc:
             return f"LangChain 基础入口加载失败: {exc}"
 
-        config = BasicAgentConfig(max_output_tokens=self.max_output_tokens)
-        agent = create_basic_langchain_agent(
-            llm=self.llm,
-            workspace=Path.cwd(),
-            config=config,
-        )
+        if self._basic_langchain_agent is None:
+            config = BasicAgentConfig(max_output_tokens=self.max_output_tokens)
+            self._basic_langchain_agent = create_basic_langchain_agent(
+                llm=self.llm,
+                workspace=Path.cwd(),
+                config=config,
+                rag=getattr(self, "rag", None),
+                mcp_tools=getattr(self, "mcp_tools", None),
+            )
+        else:
+            self._basic_langchain_agent.set_interfaces(
+                rag=getattr(self, "rag", None),
+                mcp_tools=getattr(self, "mcp_tools", None),
+            )
+        agent = self._basic_langchain_agent
         result = agent.invoke(task)
         text = result.to_text()
 
@@ -972,6 +982,21 @@ class AerospaceAgent:
                 pass
 
         return text
+
+    def run_langchain_react(
+        self,
+        task: str,
+        max_steps: int = 20,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        system_prompt: Optional[str] = None,
+    ) -> str:
+        """Backward-compatible alias for older callers."""
+        return self.run_langchain(
+            task=task,
+            max_steps=max_steps,
+            stream_callback=stream_callback,
+            system_prompt=system_prompt,
+        )
 
     def run_react_fast(self, task: str, max_steps: int = 6) -> str:
         """精简 ReAct 循环——去除重上下文管理/记忆/指标开销，专注快速推理。

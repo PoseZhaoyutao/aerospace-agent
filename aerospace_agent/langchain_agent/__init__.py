@@ -15,36 +15,18 @@ from .basic_agent import (
     BasicAgentResult,
     BasicLangChainAgent,
     BasicTool,
+    SlidingWindowMemory,
     build_basic_tools,
     build_langchain_tools,
     create_basic_langchain_agent,
     write_text_file,
 )
 
-LANGCHAIN_CORE_AVAILABLE = True
-_LANGCHAIN_CORE_IMPORT_ERROR = None
-
 try:
-    from .llm_adapter import LLMAdapter
-    from .tool_adapter import ToolAdapter, wrap_tools
-    from .mcp_tool_adapter import MCPToolAdapter
-    from .react_parser import ReActOutputParser, AgentAction, AgentFinish
-    from .react_agent import ReActAgent, AgentConfig, AgentResult
-except ModuleNotFoundError as exc:
-    if exc.name != "langchain_core":
-        raise
+    import langchain_core  # noqa: F401
+    LANGCHAIN_CORE_AVAILABLE = True
+except ModuleNotFoundError:
     LANGCHAIN_CORE_AVAILABLE = False
-    _LANGCHAIN_CORE_IMPORT_ERROR = exc
-    LLMAdapter = None
-    ToolAdapter = None
-    MCPToolAdapter = None
-    wrap_tools = None
-    ReActOutputParser = None
-    AgentAction = None
-    AgentFinish = None
-    ReActAgent = None
-    AgentConfig = None
-    AgentResult = None
 
 __all__ = [
     "BasicAgentConfig",
@@ -52,18 +34,9 @@ __all__ = [
     "BasicLangChainAgent",
     "BasicTool",
     "LANGCHAIN_CORE_AVAILABLE",
+    "SlidingWindowMemory",
     "build_basic_tools",
     "build_langchain_tools",
     "create_basic_langchain_agent",
     "write_text_file",
-    "LLMAdapter",
-    "ToolAdapter",
-    "MCPToolAdapter",
-    "wrap_tools",
-    "ReActOutputParser",
-    "AgentAction",
-    "AgentFinish",
-    "ReActAgent",
-    "AgentConfig",
-    "AgentResult",
 ]
