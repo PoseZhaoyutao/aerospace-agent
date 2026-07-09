@@ -202,6 +202,84 @@ def test_agent_injects_rag_context_when_available():
     assert any("RAG evidence alpha" in message["content"] for message in llm.messages)
 
 
+def test_agent_injects_explicit_declarative_skill_context():
+    workspace = _workspace("agent_skill_context")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nRender pages before trusting layout.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    llm = OneShotLLM("pdf-context answer")
+    agent = BasicLangChainAgent(llm=llm, workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("请使用 pdf 技能检查这个 PDF 的版式")
+
+    assert result.ok is True
+    assert result.action == "llm_once"
+    assert result.metadata["skills"][0]["name"] == "pdf"
+    assert any("PDF Skill" in message["content"] for message in llm.messages)
+    assert any("Render pages before trusting layout" in message["content"] for message in llm.messages)
+
+
+def test_agent_routes_direct_list_skills_request_without_llm():
+    workspace = _workspace("agent_list_skills")
+    registry = SkillRegistry()
+    registry.register(EchoSkill())
+    agent = BasicLangChainAgent(llm=ExplodingLLM(), workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("列出技能")
+
+    assert result.ok is True
+    assert result.action == "list_skills"
+    assert "echo_skill" in result.output
+
+
+def test_agent_routes_direct_load_skill_request_without_llm():
+    workspace = _workspace("agent_load_skill")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nUse Poppler when available.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    agent = BasicLangChainAgent(llm=ExplodingLLM(), workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("加载 pdf 技能")
+
+    assert result.ok is True
+    assert result.action == "use_skill"
+    assert "instruction_context" in result.output
+    assert "Use Poppler when available" in result.output
+
+
+def test_agent_routes_english_load_skill_request_without_llm():
+    workspace = _workspace("agent_load_skill_english")
+    skill_root = workspace / "skills"
+    skill_dir = skill_root / "pdf"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: pdf\ndescription: Use when reading PDF files.\n---\n# PDF Skill\nUse Poppler when available.\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry(skill_roots=[skill_root])
+    registry.discover_manifests()
+    agent = BasicLangChainAgent(llm=ExplodingLLM(), workspace=workspace, skill_registry=registry)
+
+    result = agent.invoke("load pdf skill")
+
+    assert result.ok is True
+    assert result.action == "use_skill"
+    assert "instruction_context" in result.output
+    assert "Use Poppler when available" in result.output
+
+
 def test_build_basic_tools_exposes_minimal_safe_tools():
     workspace = _workspace("tools")
 

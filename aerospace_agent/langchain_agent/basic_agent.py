@@ -42,6 +42,9 @@ class BasicAgentConfig:
     rag_top_k: int = 3
     enable_rag_context: bool = True
     skill_install_dir: str = ".aerospace_skills"
+    enable_skill_context: bool = True
+    max_skill_contexts: int = 2
+    skill_context_max_chars: int = 8000
 
 
 @dataclass
@@ -722,6 +725,10 @@ class BasicLangChainAgent:
 
     def invoke(self, task: str) -> BasicAgentResult:
         task = task.strip()
+        direct_skill_result = self._handle_direct_skill_request(task)
+        if direct_skill_result is not None:
+            self._remember(task, direct_skill_result.output)
+            return direct_skill_result
         if self._is_static_site_request(task):
             result = self._write_static_site(task)
             self._remember(task, result.output)
@@ -809,11 +816,12 @@ class BasicLangChainAgent:
         )
 
     def _llm_once(self, task: str) -> BasicAgentResult:
+        skill_contexts = self._skill_contexts_for_task(task)
         try:
             if self._runnable is not None:
-                output = self._runnable.invoke(task)
+                output = self._call_llm_once(task, skill_contexts=skill_contexts)
             else:
-                output = self._call_llm_once(task)
+                output = self._call_llm_once(task, skill_contexts=skill_contexts)
         except Exception as exc:
             return BasicAgentResult(
                 ok=False,
@@ -828,12 +836,26 @@ class BasicLangChainAgent:
             output=str(output),
             action="llm_once",
             backend=self.backend,
+            metadata={
+                "skills": [
+                    {
+                        "name": context["name"],
+                        "path": context.get("path"),
+                        "execution_mode": context.get("execution_mode"),
+                    }
+                    for context in skill_contexts
+                ],
+            } if skill_contexts else {},
         )
         self._remember(task, result.output)
         return result
 
-    def _call_llm_once(self, task: str) -> str:
-        messages = self._build_messages(task)
+    def _call_llm_once(
+        self,
+        task: str,
+        skill_contexts: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        messages = self._build_messages(task, skill_contexts=skill_contexts)
         if hasattr(self.llm, "chat"):
             return str(
                 self.llm.chat(
@@ -846,7 +868,11 @@ class BasicLangChainAgent:
             return str(self.llm(messages))
         raise RuntimeError("LLM_UNAVAILABLE")
 
-    def _build_messages(self, task: str) -> List[Dict[str, str]]:
+    def _build_messages(
+        self,
+        task: str,
+        skill_contexts: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, str]]:
         messages = [
             {
                 "role": "system",
@@ -857,6 +883,14 @@ class BasicLangChainAgent:
                 ),
             },
         ]
+        skill_context_text = self._format_skill_contexts(
+            skill_contexts if skill_contexts is not None else self._skill_contexts_for_task(task)
+        )
+        if skill_context_text:
+            messages.append({
+                "role": "system",
+                "content": skill_context_text,
+            })
         rag_context = self._rag_context(task)
         if rag_context:
             messages.append({
@@ -870,6 +904,176 @@ class BasicLangChainAgent:
     def _remember(self, task: str, output: str) -> None:
         self.memory.add("user", task)
         self.memory.add("assistant", output)
+
+    def _handle_direct_skill_request(self, task: str) -> Optional[BasicAgentResult]:
+        lowered = task.lower()
+        compact = re.sub(r"\s+", "", lowered)
+
+        if any(phrase in compact for phrase in ("列出技能", "查看技能", "有哪些技能")) or "list skills" in lowered:
+            tool_result = self._tool("list_skills").invoke()
+            return BasicAgentResult(
+                ok=tool_result.get("status") == "ok",
+                output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+                action="list_skills",
+                backend=self.backend,
+                metadata={"tool_result": tool_result},
+            )
+
+        install_path = self._extract_install_skill_path(task)
+        if install_path:
+            tool_result = self._tool("install_skill_from_path").invoke({
+                "path": install_path,
+                "overwrite": True,
+            })
+            return BasicAgentResult(
+                ok=tool_result.get("status") == "ok",
+                output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+                action="install_skill_from_path",
+                backend=self.backend,
+                metadata={"tool_result": tool_result},
+            )
+
+        skill_name = self._extract_direct_load_skill_name(task)
+        if skill_name:
+            tool_result = self._tool("use_skill").invoke({"name": skill_name})
+            return BasicAgentResult(
+                ok=tool_result.get("status") == "ok",
+                output=json.dumps(tool_result, ensure_ascii=False, indent=2, default=str),
+                action="use_skill",
+                backend=self.backend,
+                metadata={"tool_result": tool_result},
+            )
+        return None
+
+    @staticmethod
+    def _extract_install_skill_path(task: str) -> Optional[str]:
+        lowered = task.lower()
+        if "install skill" not in lowered and not ("安装" in task and "技能" in task):
+            return None
+        quoted = re.search(r'["“](.+?)["”]', task)
+        if quoted:
+            return quoted.group(1).strip()
+        match = re.search(r"(?:install skill|安装技能|安装\s+skill)\s+(.+)$", task, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    def _extract_direct_load_skill_name(self, task: str) -> Optional[str]:
+        lowered = task.lower()
+        if "use_skill" in lowered:
+            match = re.search(r"use_skill\s*\(?\s*['\"]?([A-Za-z0-9_.:-]+)", task)
+            if match:
+                return self._resolve_skill_name(match.group(1))
+
+        load_intent = (
+            any(word in task for word in ("加载", "读取", "查看", "显示"))
+            or ("load" in lowered and "skill" in lowered)
+            or ("show" in lowered and "skill" in lowered)
+        )
+        if not load_intent or "技能" not in task and "skill" not in lowered:
+            return None
+
+        for name in self._all_skill_names():
+            if self._task_mentions_skill(task, name):
+                return name
+        return None
+
+    def _skill_contexts_for_task(self, task: str) -> List[Dict[str, Any]]:
+        if not self.config.enable_skill_context:
+            return []
+
+        contexts: List[Dict[str, Any]] = []
+        for name in self._skill_names_for_task(task):
+            tool_result = self._tool("use_skill").invoke({"name": name})
+            payload = tool_result.get("result") or {}
+            if tool_result.get("status") != "ok":
+                continue
+            if payload.get("execution_mode") != "instruction_context":
+                continue
+            instructions = str(payload.get("instructions") or "")
+            if not instructions:
+                continue
+            manifest = payload.get("manifest") or {}
+            contexts.append({
+                "name": name,
+                "path": manifest.get("path"),
+                "execution_mode": payload.get("execution_mode"),
+                "instructions": instructions[: self.config.skill_context_max_chars],
+            })
+            if len(contexts) >= max(1, self.config.max_skill_contexts):
+                break
+        return contexts
+
+    def _skill_names_for_task(self, task: str) -> List[str]:
+        names: List[str] = []
+        for name in self._all_skill_names():
+            if self._task_mentions_skill(task, name):
+                names.append(name)
+        return names
+
+    def _all_skill_names(self) -> List[str]:
+        items = []
+        try:
+            items.extend(self.skill_registry.list_skills())
+        except Exception:
+            pass
+        try:
+            items.extend(self.skill_registry.list_skill_manifests())
+        except Exception:
+            pass
+
+        names = []
+        seen = set()
+        for item in items:
+            name = str(item.get("name", "")).strip()
+            key = name.lower()
+            if name and key not in seen:
+                names.append(name)
+                seen.add(key)
+        return names
+
+    def _resolve_skill_name(self, requested: str) -> str:
+        requested_key = requested.lower()
+        for name in self._all_skill_names():
+            if name.lower() == requested_key:
+                return name
+        return requested
+
+    @staticmethod
+    def _task_mentions_skill(task: str, name: str) -> bool:
+        lowered = task.lower()
+        skill = name.lower()
+        variants = {
+            skill,
+            skill.replace("-", " "),
+            skill.replace("_", " "),
+            skill.split(":")[-1],
+        }
+        normalized_task = re.sub(r"[^a-z0-9]+", " ", lowered)
+        for variant in variants:
+            if not variant:
+                continue
+            if f"${variant}" in lowered or f"@{variant}" in lowered:
+                return True
+            normalized_variant = re.sub(r"[^a-z0-9]+", " ", variant).strip()
+            if normalized_variant and re.search(rf"(?<![a-z0-9]){re.escape(normalized_variant)}(?![a-z0-9])", normalized_task):
+                return True
+        return False
+
+    @staticmethod
+    def _format_skill_contexts(contexts: List[Dict[str, Any]]) -> str:
+        if not contexts:
+            return ""
+        blocks = []
+        for context in contexts:
+            header = (
+                "Skill context (local operating instructions, not evidence):\n"
+                f"Skill: {context['name']}\n"
+                f"Path: {context.get('path') or 'unknown'}\n"
+                f"Execution mode: {context.get('execution_mode')}\n"
+            )
+            blocks.append(header + str(context.get("instructions") or ""))
+        return "\n\n---\n\n".join(blocks)
 
     def _rag_context(self, task: str) -> str:
         if not self.config.enable_rag_context or self.rag is None:
