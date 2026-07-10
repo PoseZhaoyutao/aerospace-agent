@@ -5,10 +5,15 @@ __pycache__/
 # 运行时数据与生成物
 /data/memory.json
 /data/offload/
+/data/langgraph/
+/memory/
+/evolved_skills/
+/workflows/evolved/
 /reports/*.html
 /demo_outputs/*.png
 /demo_output/
 /.test_runs/
+/.superpowers/
 /.aerospace_skills/
 /aerospace_agent/langchain_agent/react_agent.py
 /aerospace_agent/langchain_agent/react_parser.py

@@ -1,0 +1,29 @@
+schema_version: "1.0.0"
+llm:
+  endpoint: "http://127.0.0.1:8000/v1"
+  model: "qwythos"
+runtime:
+  max_steps: 15
+  recursion_limit: 40
+  cycle_max_repeats: 3
+context:
+  max_tokens: 8192
+  recent_turns: 8
+  artifacts_dir: "data/langgraph/artifacts"
+knowledge:
+  workspace: "knowledge"
+  data_dir: "data/langgraph/rag"
+  graph_output: "reports/knowledge_graph.html"
+checkpoint:
+  backend: "sqlite"
+  path: "data/langgraph/checkpoints.sqlite"
+evolution:
+  enabled: true
+  idle_minutes: 10
+  min_turns: 6
+  data_dir: "data/langgraph/evolution"
+  allowed_roots: ["knowledge", "memory", "evolved_skills", "workflows/evolved"]
+mcp:
+  transport: "stdio"
+  command: "python"
+  args: ["-m", "aerospace_agent.mcp.server"]

@@ -34,11 +34,16 @@ setup(
         "scipy",
         "click",
         "pyyaml",
+        "langgraph>=1.0,<2.0",
+        "langgraph-checkpoint-sqlite>=3.0,<4.0",
+        "langchain-core>=1.0,<2.0",
+        "pydantic>=2.0,<3.0",
+        "mcp>=1.0,<2.0",
     ],
     extras_require={
         "plot": ["matplotlib"],
         "rich": ["rich"],
-        "mcp-server": ["mcp>=1.0.0"],
+        "mcp-server": ["mcp>=1.0,<2.0"],
         "local-llm": ["openai>=1.0.0"],
         "engines": [
             "astropy",

@@ -4,6 +4,13 @@ scipy
 click
 pyyaml
 
+# LangGraph aerospace agent runtime (bounded major versions)
+langgraph>=1.0,<2.0
+langgraph-checkpoint-sqlite>=3.0,<4.0
+langchain-core>=1.0,<2.0
+pydantic>=2.0,<3.0
+mcp>=1.0,<2.0
+
 # 可视化依赖（可选，用于绘图/报告生成）
 matplotlib
 
@@ -15,7 +22,6 @@ pytest
 pytest-cov
 
 # LangChain Agent 层（基于 langchain-core 的标准化 ReAct 循环）
-langchain-core
 # rich            # 彩色终端输出（未装时回退到 print）
 # openai          # 真实 LLM 调用（已内置标准库实现，无需强制安装）
 # mcp             # MCP Server 协议库（仅独立运行 MCP Server 时需要）
