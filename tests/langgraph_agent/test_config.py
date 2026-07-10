@@ -79,3 +79,22 @@ def test_explicit_environment_overrides(monkeypatch, tmp_path):
     settings = load_settings(workspace=tmp_path)
     assert settings.llm.endpoint == "http://127.0.0.1:9000/v1"
     assert settings.llm.model == "test-model"
+
+
+def test_missing_explicit_environment_config_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("AEROSPACE_LANGGRAPH_CONFIG", "missing.yaml")
+    with pytest.raises(FileNotFoundError, match="configuration not found"):
+        load_settings(workspace=tmp_path)
+
+
+def test_relative_environment_config_is_anchored_to_workspace(monkeypatch, tmp_path):
+    config_path = tmp_path / "configs" / "custom.yaml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        "llm:\n  endpoint: http://127.0.0.1:9100/v1\n  model: relative-model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AEROSPACE_LANGGRAPH_CONFIG", "configs/custom.yaml")
+    settings = load_settings(workspace=tmp_path)
+    assert settings.llm.endpoint == "http://127.0.0.1:9100/v1"
+    assert settings.llm.model == "relative-model"

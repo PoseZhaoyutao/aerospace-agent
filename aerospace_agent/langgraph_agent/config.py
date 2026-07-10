@@ -204,12 +204,18 @@ def load_settings(*, workspace: str | Path | None = None) -> AgentSettings:
     """Load YAML settings, apply the explicit environment overrides, and validate."""
 
     configured_path = os.environ.get("AEROSPACE_LANGGRAPH_CONFIG")
-    config_path = Path(configured_path) if configured_path else _DEFAULT_CONFIG_PATH
-    if not config_path.is_absolute() and not config_path.exists():
-        # Keep the default discoverable when called outside the repository cwd.
-        package_root_config = Path(__file__).resolve().parents[2] / _DEFAULT_CONFIG_PATH
-        if package_root_config.exists():
-            config_path = package_root_config
+    if configured_path:
+        config_path = Path(configured_path)
+        if not config_path.is_absolute():
+            config_base = Path(workspace).resolve() if workspace is not None else Path.cwd()
+            config_path = config_base / config_path
+    else:
+        config_path = _DEFAULT_CONFIG_PATH
+        if not config_path.is_absolute() and not config_path.exists():
+            # Keep the default discoverable when called outside the repository cwd.
+            package_root_config = Path(__file__).resolve().parents[2] / _DEFAULT_CONFIG_PATH
+            if package_root_config.exists():
+                config_path = package_root_config
 
     mapping = copy.deepcopy(dict(_read_yaml(config_path)))
     llm = mapping.setdefault("llm", {})
