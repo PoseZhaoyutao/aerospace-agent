@@ -76,6 +76,9 @@ class RunTerminalEvent(Envelope):
     reason_code: Literal["human_approval_required"] | None = None
     answer: str = Field(default="", max_length=32_000)
     checkpoint_id: str | None = None
+    citations: list[dict[str, object]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[dict[str, object]] = Field(default_factory=list)
 
 
 def terminal_event_type(

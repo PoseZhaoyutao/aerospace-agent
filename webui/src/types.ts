@@ -26,4 +26,12 @@ export type TerminalEvent = {
   reason_code?: "human_approval_required" | null;
   answer?: string;
   checkpoint_id?: string | null;
+  citations?: Citation[];
+};
+
+export type Citation = {
+  title?: string | null;
+  excerpt?: string | null;
+  score?: number | null;
+  page_path?: string | null;
 };

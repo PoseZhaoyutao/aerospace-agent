@@ -75,6 +75,11 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .message.user .message-body { padding: 13px 16px; border-radius: 18px 18px 4px 18px; background: var(--accent-soft); }
 .message.partial .message-body, .message.interrupted .message-body, .message.error .message-body { color: var(--muted); }
 .reason-badge { display: inline-block; margin-top: 14px; padding: 8px 10px; border: 1px solid #dfad5d; border-radius: 8px; color: #a16822; font-size: 11px; }
+.citation-list { display: grid; gap: 8px; margin-top: 18px; }
+.citation-card { padding: 12px 13px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--panel) 88%, var(--paper)); }
+.citation-title { font-size: 12px; font-weight: 700; }
+.citation-excerpt { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.citation-score { margin-top: 8px; color: var(--accent); font-family: "DM Mono", monospace; font-size: 9px; text-transform: uppercase; }
 .error-banner { display: flex; align-items: center; gap: 8px; margin: 18px auto 0; padding: 10px 13px; width: min(100% - 40px, var(--content-max-width)); border: 1px solid #efb6a7; border-radius: 10px; color: #a0482e; background: #fff0eb; font-size: 12px; }
 .status-strip { display: flex; align-items: center; gap: 10px; padding: 12px 28px; border-top: 1px solid var(--line); color: var(--muted); font-family: "DM Mono", monospace; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
 .status-strip span:nth-child(2) { margin-left: auto; }

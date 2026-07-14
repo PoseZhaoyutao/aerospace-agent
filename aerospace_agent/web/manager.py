@@ -135,6 +135,9 @@ class AgentRuntimeManager:
                 reason_code=projected["reason_code"],
                 answer=projected["answer"],
                 checkpoint_id=projected["checkpoint_id"],
+                citations=projected["citations"],
+                warnings=projected["warnings"],
+                errors=projected["errors"],
             )
         except Exception as exc:
             return RunTerminalEvent(

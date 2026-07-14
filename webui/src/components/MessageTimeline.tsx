@@ -15,6 +15,13 @@ export function MessageTimeline({ messages, terminal }: Props) {
         <div className="message-role">AGENT / {terminal.status.replace("_", " ").toUpperCase()}</div>
         <div className="message-body">{terminal.answer || "The run ended without an answer."}</div>
         {terminal.reason_code && <div className="reason-badge">Human approval required in the existing Agent Core flow</div>}
+        {!!terminal.citations?.length && <div className="citation-list" aria-label="Citations">
+          {terminal.citations.map((citation, index) => <div className="citation-card" key={`${citation.page_path ?? "citation"}-${index}`}>
+            <div className="citation-title">{citation.title || citation.page_path || "Source"}</div>
+            <div className="citation-excerpt">{citation.excerpt}</div>
+            <div className="citation-score">Evidence score {citation.score?.toFixed(2) ?? "—"}</div>
+          </div>)}
+        </div>}
       </article>}
     </div>
   );
