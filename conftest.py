@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Generator
+from uuid import uuid4
 
 import pytest
 
@@ -21,6 +23,20 @@ import pytest
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+
+@pytest.fixture
+def tmp_path(request: pytest.FixtureRequest) -> Path:
+    """Workspace-local substitute for pytest's ACL-sensitive tmpdir plugin.
+
+    The managed Windows runner rejects the default temporary-directory
+    cleanup.  Each test receives an isolated, retained path below the project
+    root, whose node id is sanitized for Windows file-name rules.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name)
+    root = _PROJECT_ROOT / ".pytest-artifacts" / f"{safe_name}-{uuid4().hex}"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 # ---------------------------------------------------------------------------

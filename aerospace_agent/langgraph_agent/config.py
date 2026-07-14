@@ -10,10 +10,10 @@ from __future__ import annotations
 import copy
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 _DEFAULT_CONFIG_PATH = Path("config/langgraph_agent.yaml")
@@ -25,15 +25,38 @@ class _SettingsModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LLMProviderSettings(_SettingsModel):
+    name: str = Field(min_length=1)
+    kind: Literal["openai_compatible", "anthropic"] = "openai_compatible"
+    endpoint: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key_env: str | None = None
+    enabled: bool = True
+    priority: int = 0
+    timeout_seconds: float = Field(default=60.0, gt=0.0, le=300.0)
+
+
 class LLMSettings(_SettingsModel):
     endpoint: str = "http://127.0.0.1:8000/v1"
     model: str = "qwythos"
+    provider: str = "local"
+    api_key_env: str | None = None
+    fallback_enabled: bool = True
+    providers: list[LLMProviderSettings] = Field(default_factory=list)
 
 
 class RuntimeSettings(_SettingsModel):
     max_steps: int = 15
     recursion_limit: int = 40
     cycle_max_repeats: int = 3
+
+
+class AgentCoreSettings(_SettingsModel):
+    """Agent Core is activated only after explicit project initialization."""
+
+    enabled: bool = True
+    execution_runs_path: Path
+    direct_execution_confidence_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
 
 
 class ContextSettings(_SettingsModel):
@@ -46,6 +69,41 @@ class KnowledgeSettings(_SettingsModel):
     workspace: Path
     data_dir: Path
     graph_output: Path
+    retrieval_confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+
+
+class WebSearchProviderSettings(_SettingsModel):
+    """One public-web search provider; credentials are referenced by env name."""
+
+    name: str = Field(min_length=1)
+    endpoint: str = Field(min_length=1)
+    kind: Literal["json", "duckduckgo_html"] = "json"
+    api_key_env: str | None = None
+    enabled: bool = True
+    timeout_seconds: float = Field(default=20.0, gt=0.0, le=120.0)
+
+
+class WebSettings(_SettingsModel):
+    search_providers: list[WebSearchProviderSettings] = Field(default_factory=list)
+    default_search_provider: str | None = None
+
+
+class WebUISettings(_SettingsModel):
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = Field(default=8765, ge=1, le=65535)
+    allow_lan: bool = False
+    auth_token_env: str | None = None
+
+    @model_validator(mode="after")
+    def reject_unimplemented_auth(self) -> "WebUISettings":
+        if self.auth_token_env is not None:
+            raise ValueError("WebUI authentication is not implemented in phase one")
+        return self
+
+
+class BrowserSettings(_SettingsModel):
+    playwright_enabled: bool = True
 
 
 class CheckpointSettings(_SettingsModel):
@@ -69,10 +127,15 @@ class MCPSettings(_SettingsModel):
 
 class AgentSettings(_SettingsModel):
     schema_version: str = "1.0.0"
+    workspace_root: Path
     llm: LLMSettings = Field(default_factory=LLMSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    agent_core: AgentCoreSettings
     context: ContextSettings
     knowledge: KnowledgeSettings
+    web: WebSettings = Field(default_factory=WebSettings)
+    webui: WebUISettings = Field(default_factory=WebUISettings)
+    browser: BrowserSettings = Field(default_factory=BrowserSettings)
     checkpoint: CheckpointSettings
     evolution: EvolutionSettings
     mcp: MCPSettings = Field(default_factory=MCPSettings)
@@ -93,12 +156,14 @@ class AgentSettings(_SettingsModel):
 
         root = Path(workspace or Path.cwd()).resolve()
         merged = _deep_merge(copy.deepcopy(_default_mapping()), mapping or {})
+        merged["workspace_root"] = root
 
         # Every path that can be written by the runtime is resolved centrally.
         knowledge = _section(merged, "knowledge")
         context = _section(merged, "context")
         checkpoint = _section(merged, "checkpoint")
         evolution = _section(merged, "evolution")
+        agent_core = _section(merged, "agent_core")
 
         knowledge["workspace"] = _resolve_workspace_path(knowledge["workspace"], root)
         knowledge["data_dir"] = _resolve_workspace_path(knowledge["data_dir"], root)
@@ -109,6 +174,9 @@ class AgentSettings(_SettingsModel):
         evolution["allowed_roots"] = [
             _resolve_workspace_path(path, root) for path in evolution["allowed_roots"]
         ]
+        agent_core["execution_runs_path"] = _resolve_workspace_path(
+            agent_core["execution_runs_path"], root
+        )
 
         return cls.model_validate(merged)
 
@@ -121,11 +189,20 @@ def _default_mapping() -> dict[str, Any]:
         "llm": {
             "endpoint": "http://127.0.0.1:8000/v1",
             "model": "qwythos",
+            "provider": "local",
+            "api_key_env": "AEROSPACE_LOCAL_LLM_API_KEY",
+            "fallback_enabled": True,
+            "providers": [],
         },
         "runtime": {
             "max_steps": 15,
             "recursion_limit": 40,
             "cycle_max_repeats": 3,
+        },
+        "agent_core": {
+            "enabled": True,
+            "execution_runs_path": "data/langgraph/execution_runs.sqlite",
+            "direct_execution_confidence_threshold": 0.75,
         },
         "context": {
             "max_tokens": 8192,
@@ -136,7 +213,27 @@ def _default_mapping() -> dict[str, Any]:
             "workspace": "knowledge",
             "data_dir": "data/langgraph/rag",
             "graph_output": "reports/knowledge_graph.html",
+            "retrieval_confidence_threshold": 0.60,
         },
+        "web": {
+            "search_providers": [
+                {
+                    "name": "duckduckgo",
+                    "endpoint": "https://html.duckduckgo.com/html/",
+                    "kind": "duckduckgo_html",
+                    "enabled": True,
+                }
+            ],
+            "default_search_provider": "duckduckgo",
+        },
+        "webui": {
+            "enabled": True,
+            "host": "127.0.0.1",
+            "port": 8765,
+            "allow_lan": False,
+            "auth_token_env": None,
+        },
+        "browser": {"playwright_enabled": True},
         "checkpoint": {
             "backend": "sqlite",
             "path": "data/langgraph/checkpoints.sqlite",
@@ -229,13 +326,18 @@ def load_settings(*, workspace: str | Path | None = None) -> AgentSettings:
 
 
 __all__ = [
+    "AgentCoreSettings",
     "AgentSettings",
+    "BrowserSettings",
     "CheckpointSettings",
     "ContextSettings",
     "EvolutionSettings",
     "KnowledgeSettings",
+    "LLMProviderSettings",
     "LLMSettings",
     "MCPSettings",
     "RuntimeSettings",
+    "WebSearchProviderSettings",
+    "WebSettings",
     "load_settings",
 ]

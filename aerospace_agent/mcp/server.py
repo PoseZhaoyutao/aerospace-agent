@@ -1,11 +1,4 @@
-"""MCP Server 入口 — 统一航天动力学 MCP 服务器。
-
-第一性原理（K2 服务边界）：
-  1. 所有工具调用包裹在 error_handler 中——绝不静默失败
-  2. 启动时打印引擎可用性，供运维和 LLM 决策
-  3. mcp 包可用时启动标准 MCP Server；否则打印可用工具列表
-  4. 每个工具的异常都转为结构化 {status:"error", reason:...}
-"""
+"""Protocol-clean entry point for the aerospace MCP server."""
 from __future__ import annotations
 
 import functools
@@ -14,129 +7,107 @@ import sys
 import traceback
 from typing import Any, Callable, Dict
 
-from .adapters import get_all_adapters
-from .tools import TOOL_REGISTRY, get_tool_definitions, CORE_TOOLS
+from .tools import CORE_TOOLS, TOOL_REGISTRY, get_tool_definitions
 from .tools.environment_tools import check_engine_availability
 
 
 def error_handler(func: Callable[..., Dict]) -> Callable[..., Dict]:
-    """工具调用统一错误处理装饰器。
+    """Convert every tool failure into a JSON-serializable result."""
 
-    捕获所有异常，转为结构化 {status:"error", reason:..., traceback:...}。
-    绝不静默失败。
-    """
     @functools.wraps(func)
     def wrapper(*args, **kwargs) -> Dict:
         try:
             result = func(*args, **kwargs)
             if result is None:
-                return {
-                    "status": "error",
-                    "reason": "工具返回 None——内部逻辑异常",
-                    "tool": func.__name__,
-                }
-            # 确保结果是可序列化的
+                return {"status": "error", "reason": "tool returned None", "tool": func.__name__}
             _ensure_serializable(result)
             return result
         except TypeError as exc:
-            return {
-                "status": "error",
-                "reason": f"参数类型错误: {exc}",
-                "tool": func.__name__,
-            }
+            return {"status": "error", "reason": f"argument type error: {exc}", "tool": func.__name__}
         except ValueError as exc:
-            return {
-                "status": "error",
-                "reason": f"数值错误: {exc}",
-                "tool": func.__name__,
-            }
+            return {"status": "error", "reason": f"value error: {exc}", "tool": func.__name__}
         except Exception as exc:
             return {
                 "status": "error",
-                "reason": f"未预期错误: {exc}",
+                "reason": f"unexpected error: {exc}",
                 "tool": func.__name__,
                 "traceback": traceback.format_exc().split("\n")[-5:],
             }
+
     return wrapper
 
 
 def _ensure_serializable(obj: Any) -> None:
-    """验证对象是否 JSON 可序列化（不可序列化时抛出 ValueError）。"""
     try:
         json.dumps(obj, default=str)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"工具返回值不可 JSON 序列化: {exc}")
+        raise ValueError(f"tool result is not JSON serializable: {exc}") from exc
 
 
 def _wrap_all_tools() -> Dict[str, Callable[..., Dict]]:
-    """用 error_handler 包装所有注册的工具。"""
+    # ``get_tool_definitions`` lazily registers research tools.  Populate the
+    # registry before taking its snapshot so every advertised tool has a
+    # callable handler.
+    get_tool_definitions()
     return {name: error_handler(fn) for name, fn in TOOL_REGISTRY.items()}
 
 
-def print_startup_info() -> None:
-    """启动时打印引擎可用性和工具列表。"""
-    print("=" * 70)
-    print("  astro_dynamics_mcp — 统一航天动力学 MCP Server")
-    print("=" * 70)
-    print()
+def print_startup_info(*, file=None, include_availability: bool = True) -> None:
+    """Print human diagnostics, never protocol frames.
 
-    # 引擎可用性
-    print("[引擎可用性检查]")
-    availability = check_engine_availability()
-    for engine, info in availability.items():
-        status = "可用" if info.get("available") else "不可用"
-        version = info.get("version", "N/A")
-        caps = info.get("capabilities", [])
-        caps_str = ", ".join(caps) if caps else "无"
-        reason = info.get("reason", "")
-        line = f"  {engine:12s} | {status:4s} | v{version:20s} | 能力: {caps_str}"
-        if reason:
-            line += f"\n               | 原因: {reason}"
-        print(line)
+    ``include_availability=False`` avoids probing optional/commercial engines
+    during stdio startup.  In stdio mode all output is directed to stderr.
+    """
 
-    print()
-    print(f"[已注册工具] 共 {len(CORE_TOOLS)} 个核心工具:")
+    if file is None:
+        file = sys.stdout
+    print("=" * 70, file=file)
+    print("  astro_dynamics_mcp MCP Server", file=file)
+    print("=" * 70, file=file)
+    if include_availability:
+        print("[engine availability]", file=file)
+        availability = check_engine_availability()
+        for engine, info in availability.items():
+            status = "available" if info.get("available") else "unavailable"
+            version = info.get("version", "N/A")
+            caps = ", ".join(info.get("capabilities", [])) or "none"
+            reason = info.get("reason", "")
+            line = f"  {engine:12s} | {status:11s} | v{version:20s} | capabilities: {caps}"
+            if reason:
+                line += f"\n               | reason: {reason}"
+            print(line, file=file)
+    print(file=file)
+    print(f"[registered tools] {len(CORE_TOOLS)} core tools", file=file)
     for i, tool_name in enumerate(CORE_TOOLS, 1):
-        print(f"  {i:2d}. {tool_name}")
-
-    print()
-    available_count = sum(1 for v in availability.values()
-                          if v.get("available"))
-    print(f"  可用引擎: {available_count} / {len(availability)}")
-    print("=" * 70)
+        print(f"  {i:2d}. {tool_name}", file=file)
+    if include_availability:
+        count = sum(1 for info in availability.values() if info.get("available"))
+        print(f"  available engines: {count} / {len(availability)}", file=file)
+    print("=" * 70, file=file)
 
 
 def main() -> None:
-    """MCP Server 主入口。
-
-    优先使用 mcp 包启动标准 MCP 服务器；
-    若 mcp 包不可用，则打印可用工具列表并进入命令行模式。
-    """
-    print_startup_info()
-
     wrapped_tools = _wrap_all_tools()
-
-    # 尝试启动 MCP Server
     try:
-        from mcp.server import Server  # type: ignore
-        from mcp.server.stdio import stdio_server  # type: ignore
-        _run_mcp_server(wrapped_tools)
-        return
+        from mcp.server import Server  # type: ignore  # noqa: F401
     except ImportError:
-        print("\n[mcp 包未安装] 启动命令行模式。")
-        print("安装 MCP 支持: pip install 'astro-dynamics-mcp[mcp]'")
-        print()
+        print_startup_info()
+        print("\n[mcp package unavailable] entering CLI mode")
+        print("Install MCP support with: pip install 'astro-dynamics-mcp[mcp]'\n")
         _run_cli_mode(wrapped_tools)
-    except Exception as exc:
-        print(f"\n[MCP Server 启动失败: {exc}]")
-        print("回退到命令行模式。\n")
-        _run_cli_mode(wrapped_tools)
+        return
+
+    # stdout is reserved for JSON-RPC frames in stdio mode.
+    print_startup_info(file=sys.stderr, include_availability=False)
+    _run_mcp_server(wrapped_tools)
 
 
 def _run_mcp_server(tools: Dict[str, Callable]) -> None:
-    """使用 mcp 包启动标准 MCP 服务器。"""
+    """Run the official MCP stdio server with protocol-safe content types."""
+
     from mcp.server import Server  # type: ignore
-    from mcp.types import Tool  # type: ignore
+    from mcp.server.stdio import stdio_server  # type: ignore
+    from mcp.types import TextContent, Tool  # type: ignore
 
     server = Server("astro-dynamics-mcp")
     definitions = get_tool_definitions()
@@ -145,49 +116,55 @@ def _run_mcp_server(tools: Dict[str, Callable]) -> None:
     async def list_tools() -> list:
         return [
             Tool(
-                name=d["name"],
-                description=d["description"],
-                inputSchema=d["inputSchema"],
+                name=definition["name"],
+                description=definition["description"],
+                inputSchema=definition["inputSchema"],
             )
-            for d in definitions
+            for definition in definitions
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict) -> list:
+    async def call_tool(name: str, arguments: dict | None) -> list:
+        arguments = arguments or {}
         if name not in tools:
-            return [{"type": "text", "text": json.dumps({
-                "status": "error",
-                "reason": f"未知工具: {name}",
-            })}]
+            result = {"status": "tool_unavailable", "error": f"unknown MCP tool: {name}"}
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+        definition = next((item for item in definitions if item.get("name") == name), None)
+        required = ((definition or {}).get("inputSchema") or {}).get("required", [])
+        missing = [field for field in required if field not in arguments]
+        if missing:
+            result = {
+                "status": "invalid_arguments",
+                "error": "missing required arguments: " + ", ".join(missing),
+                "tool": name,
+            }
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
         result = tools[name](**arguments)
-        return [{"type": "text", "text": json.dumps(result, default=str)}]
+        return [TextContent(type="text", text=json.dumps(result, default=str, ensure_ascii=False))]
 
     import asyncio
 
-    async def run():
+    async def run() -> None:
         async with stdio_server() as (read, write):
             await server.run(read, write, server.create_initialization_options())
 
-    print("\n[MCP Server 已启动] 等待工具调用...\n")
+    print("[MCP Server started; waiting for tool calls]", file=sys.stderr)
     asyncio.run(run())
 
 
 def _run_cli_mode(tools: Dict[str, Callable]) -> None:
-    """命令行交互模式（mcp 包不可用时的回退）。"""
-    print("可用命令:")
-    print("  <tool_name> <json_args>  — 调用工具")
-    print("  list                      — 列出所有工具")
-    print("  defs                      — 打印工具定义")
-    print("  quit                      — 退出")
+    print("Available commands:")
+    print("  <tool_name> <json_args>  call a tool")
+    print("  list                     list tools")
+    print("  defs                     print tool definitions")
+    print("  quit                     exit")
     print()
-
     while True:
         try:
             line = input("astro_dynamics> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n再见。")
+            print("\nGoodbye.")
             break
-
         if not line:
             continue
         if line in ("quit", "exit", "q"):
@@ -199,23 +176,19 @@ def _run_cli_mode(tools: Dict[str, Callable]) -> None:
         if line == "defs":
             print(json.dumps(get_tool_definitions(), indent=2, ensure_ascii=False))
             continue
-
         parts = line.split(None, 1)
         tool_name = parts[0]
-        args = {}
+        args: dict[str, Any] = {}
         if len(parts) > 1:
             try:
                 args = json.loads(parts[1])
             except json.JSONDecodeError as exc:
-                print(f"参数 JSON 解析失败: {exc}")
+                print(f"JSON argument parse failed: {exc}")
                 continue
-
         if tool_name not in tools:
-            print(f"未知工具: {tool_name}。输入 'list' 查看可用工具。")
+            print(f"Unknown tool: {tool_name}")
             continue
-
-        result = tools[tool_name](**args)
-        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        print(json.dumps(tools[tool_name](**args), indent=2, ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":

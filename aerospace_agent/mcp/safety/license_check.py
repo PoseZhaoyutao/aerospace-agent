@@ -39,6 +39,17 @@ def check_license(engine: str) -> Dict[str, object]:
         }
 
     if engine == "stk":
+        # COM startup can block or crash a non-interactive MCP process on
+        # machines without an installed/licensed STK.  It is opt-in so a
+        # health probe remains bounded and auditable; deployments that have
+        # validated STK may enable it explicitly.
+        if os.environ.get("AEROSPACE_ENABLE_STK_COM_PROBE", "").lower() not in {"1", "true", "yes"}:
+            return {
+                "engine": "stk",
+                "licensed": False,
+                "details": "STK COM license probe disabled (set AEROSPACE_ENABLE_STK_COM_PROBE=1 to opt in)",
+                "method": "com_probe_disabled",
+            }
         return _check_stk_license()
 
     return {

@@ -10,39 +10,63 @@ Qwen3 + AerospaceAgent 完整 ReAct 循环集成测试。
   2. 数学计算：用 calculator 工具计算轨道周期
   3. RAG 检索：查询轨道力学知识
 """
-import sys
 import os
 import time
+import json
+import urllib.request
 
-sys.path.insert(0, r"d:\Project\aerospace-agent")
-os.environ["AEROSPACE_LOCAL_LLM_BASE_URL"] = "http://127.0.0.1:8000/v1"
-os.environ["AEROSPACE_LOCAL_LLM_MODEL"] = "qwen3-vl"
+import pytest
 
 from aerospace_agent.core.llm_interface import LocalLLM
 from aerospace_agent.core.agent import create_default_agent, AerospaceAgent
 
 
-def create_qwen3_agent(max_steps: int = 8) -> AerospaceAgent:
+@pytest.fixture(scope="module")
+def qwen_config() -> tuple[str, str]:
+    endpoint = os.environ.get(
+        "AEROSPACE_LOCAL_LLM_BASE_URL",
+        "http://127.0.0.1:8000/v1",
+    ).rstrip("/")
+    model = os.environ.get("AEROSPACE_LOCAL_LLM_MODEL", "qwythos")
+    try:
+        with urllib.request.urlopen(f"{endpoint}/models", timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        models = {
+            str(item.get("id", ""))
+            for item in payload.get("data", [])
+            if isinstance(item, dict)
+        }
+    except Exception as exc:
+        pytest.skip(f"local Qwen endpoint unavailable: {type(exc).__name__}: {exc}")
+    if model not in models:
+        pytest.skip(f"configured model {model!r} is not listed by /models")
+    return endpoint, model
+
+
+def create_qwen3_agent(qwen_config: tuple[str, str], max_steps: int = 8) -> AerospaceAgent:
     """创建使用 Qwen3 的 Agent（非 MockLLM）。"""
+    endpoint, model = qwen_config
     llm = LocalLLM(
-        base_url="http://127.0.0.1:8000/v1",
-        model="qwen3-vl",
+        base_url=endpoint,
+        model=model,
         max_retries=3,
         retry_delay=2.0,
     )
-    agent = create_default_agent(force_mock=False, max_steps=max_steps)
+    agent = create_default_agent(force_mock=True, max_steps=max_steps)
     # 替换 LLM 为 Qwen3
     agent.llm = llm
     return agent
 
 
-def test_tool_call():
+@pytest.mark.qwen3
+@pytest.mark.integration
+def test_tool_call(qwen_config):
     """场景 1：Agent 通过 ReAct 调用 orbital_velocity 工具。"""
     print("\n" + "=" * 70)
     print("场景 1：工具调用 — 计算 400km 圆轨道速度")
     print("=" * 70)
 
-    agent = create_qwen3_agent(max_steps=6)
+    agent = create_qwen3_agent(qwen_config, max_steps=6)
     task = "请使用 orbital_velocity 工具计算 400km 高度圆轨道的轨道速度。先调用工具，再根据结果给出 Final Answer。"
 
     print(f"\n任务: {task}")
@@ -60,16 +84,18 @@ def test_tool_call():
     # 验证：结果应包含速度数值（约 7.67 km/s）
     success = "7.6" in str(result) or "7.7" in str(result)
     print(f"\n{'✓ 通过' if success else '✗ 需检查'} — 预期 ~7.67 km/s")
-    return success
+    assert success, f"expected a circular-orbit speed near 7.67 km/s, got: {result}"
 
 
-def test_calculator():
+@pytest.mark.qwen3
+@pytest.mark.integration
+def test_calculator(qwen_config):
     """场景 2：Agent 通过 ReAct 调用 calculator 工具。"""
     print("\n" + "=" * 70)
     print("场景 2：数学计算 — 用 calculator 工具计算 2*pi*sqrt(6778137^3/398600441800000)")
     print("=" * 70)
 
-    agent = create_qwen3_agent(max_steps=6)
+    agent = create_qwen3_agent(qwen_config, max_steps=6)
     task = "请使用 calculator 工具计算表达式 2*math.pi*math.sqrt(6778137**3/398600441800000) ，然后给出 Final Answer。"
 
     print(f"\n任务: {task}")
@@ -85,7 +111,7 @@ def test_calculator():
     # 验证：结果应包含 ~5553s（轨道周期）或 ~1.54h
     success = "5553" in str(result) or "5554" in str(result) or "1.5" in str(result)
     print(f"\n{'✓ 通过' if success else '✗ 需检查'} — 预期 ~5553s 或 ~1.54h")
-    return success
+    assert success, f"expected an orbital period near 5553 s, got: {result}"
 
 
 def test_rag_query():
@@ -94,11 +120,11 @@ def test_rag_query():
     print("场景 3：RAG 知识检索 — 查询霍曼转移轨道")
     print("=" * 70)
 
-    agent = create_qwen3_agent(max_steps=4)
+    agent = create_default_agent(force_mock=True, max_steps=4)
 
     if agent.rag is None:
         print("✗ 跳过 — RAG 不可用")
-        return False
+        pytest.skip("RAG unavailable")
 
     t0 = time.time()
     # 直接测试 RAG 检索
@@ -110,16 +136,18 @@ def test_rag_query():
 
     success = "霍曼" in result or "Hohmann" in result.lower() or "转移" in result
     print(f"\n{'✓ 通过' if success else '✗ 需检查'}")
-    return success
+    assert success, f"expected a Hohmann-transfer retrieval result, got: {result}"
 
 
-def test_full_react_with_rag():
+@pytest.mark.qwen3
+@pytest.mark.integration
+def test_full_react_with_rag(qwen_config):
     """场景 4：完整 ReAct 循环 — Agent 结合工具和知识回答问题。"""
     print("\n" + "=" * 70)
     print("场景 4：完整 ReAct — 计算地月转移 TLI 速度增量")
     print("=" * 70)
 
-    agent = create_qwen3_agent(max_steps=8)
+    agent = create_qwen3_agent(qwen_config, max_steps=8)
     task = (
         "计算从 400km 停泊轨道到月球转移轨道(TLI)的速度增量。"
         "请先用 orbit_calculator 工具计算，然后给出 Final Answer。"
@@ -138,53 +166,6 @@ def test_full_react_with_rag():
     # TLI 速度增量约 3.1-3.2 km/s
     success = "3.0" in str(result) or "3.1" in str(result) or "3.2" in str(result)
     print(f"\n{'✓ 通过' if success else '✗ 需检查'} — 预期 ~3.1 km/s")
-    return success
+    assert success, f"expected a TLI delta-v near 3.1 km/s, got: {result}"
 
 
-if __name__ == "__main__":
-    print("=" * 70)
-    print("  Qwen3 + AerospaceAgent 完整集成测试")
-    print("  LLM: Qwen3-VL-8B-Instruct @ http://127.0.0.1:8000")
-    print("=" * 70)
-
-    results = {}
-
-    # 场景 1：工具调用
-    try:
-        results["tool_call"] = test_tool_call()
-    except Exception as e:
-        print(f"\n异常: {e}")
-        results["tool_call"] = False
-
-    # 场景 2：数学计算
-    try:
-        results["calculator"] = test_calculator()
-    except Exception as e:
-        print(f"\n异常: {e}")
-        results["calculator"] = False
-
-    # 场景 3：RAG 检索
-    try:
-        results["rag_query"] = test_rag_query()
-    except Exception as e:
-        print(f"\n异常: {e}")
-        results["rag_query"] = False
-
-    # 场景 4：完整 ReAct
-    try:
-        results["full_react"] = test_full_react_with_rag()
-    except Exception as e:
-        print(f"\n异常: {e}")
-        results["full_react"] = False
-
-    # 汇总
-    print("\n" + "=" * 70)
-    print("  测试汇总")
-    print("=" * 70)
-    for name, passed in results.items():
-        status = "✓ 通过" if passed else "✗ 失败"
-        print(f"  {name:20s} {status}")
-
-    total = sum(results.values())
-    print(f"\n  通过率: {total}/{len(results)}")
-    print("=" * 70)

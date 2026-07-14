@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import re
+import queue
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -32,7 +34,11 @@ _DEMO_SCAN_ENV = {
 }
 
 
-def check_engine_availability(engines: Optional[List[str]] = None) -> Dict:
+def check_engine_availability(
+    engines: Optional[List[str]] = None,
+    *,
+    timeout_seconds: float = 1.0,
+) -> Dict:
     """检查全部或指定引擎的可用性。
 
     Args:
@@ -58,10 +64,57 @@ def check_engine_availability(engines: Optional[List[str]] = None) -> Dict:
             }
             continue
 
+        if (
+            engine_lower == "stk"
+            and os.environ.get("AEROSPACE_ENABLE_STK_COM_PROBE", "").lower()
+            not in {"1", "true", "yes"}
+        ):
+            result[engine_lower] = {
+                "available": False,
+                "version": "unavailable",
+                "capabilities": [],
+                "data_path": os.environ.get(_DEMO_SCAN_ENV.get(engine_lower, ""), ""),
+                "license_status": check_license(engine_lower),
+                "reason": "STK COM probe disabled; set AEROSPACE_ENABLE_STK_COM_PROBE=1 to opt in",
+            }
+            continue
+
         try:
-            available = adapter.is_available()
-            version = adapter.version() if available else "unavailable"
-            caps = sorted(adapter.capabilities()) if available else []
+            def _probe():
+                available = bool(adapter.is_available())
+                version = adapter.version() if available else "unavailable"
+                caps = sorted(adapter.capabilities()) if available else []
+                return available, version, caps
+
+            result_queue: queue.Queue = queue.Queue(maxsize=1)
+
+            def _run_probe() -> None:
+                try:
+                    result_queue.put((True, _probe()))
+                except BaseException as exc:  # propagate into the caller
+                    result_queue.put((False, exc))
+
+            threading.Thread(
+                target=_run_probe,
+                name=f"engine-probe-{engine_lower}",
+                daemon=True,
+            ).start()
+            try:
+                ok, payload = result_queue.get(timeout=max(0.1, float(timeout_seconds)))
+                if not ok:
+                    raise payload
+                available, version, caps = payload
+            except queue.Empty:
+                result[engine_lower] = {
+                    "available": False,
+                    "version": "unavailable",
+                    "capabilities": [],
+                    "data_path": "",
+                    "license_status": check_license(engine_lower),
+                    "reason": f"availability probe timed out after {timeout_seconds:.1f}s",
+                    "timed_out": True,
+                }
+                continue
 
             # 数据路径（从环境变量推断）
             env_var = _DEMO_SCAN_ENV.get(engine_lower)

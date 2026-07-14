@@ -2,10 +2,32 @@ schema_version: "1.0.0"
 llm:
   endpoint: "http://127.0.0.1:8000/v1"
   model: "qwythos"
+  provider: "local"
+  api_key_env: "AEROSPACE_LOCAL_LLM_API_KEY"
+  fallback_enabled: true
+  providers:
+    - name: "openai"
+      kind: "openai_compatible"
+      endpoint: "https://api.openai.com/v1"
+      model: "gpt-4o-mini"
+      api_key_env: "OPENAI_API_KEY"
+      enabled: false
+      priority: 10
+    - name: "anthropic"
+      kind: "anthropic"
+      endpoint: "https://api.anthropic.com"
+      model: "claude-3-5-sonnet-latest"
+      api_key_env: "ANTHROPIC_API_KEY"
+      enabled: false
+      priority: 20
 runtime:
   max_steps: 15
   recursion_limit: 40
   cycle_max_repeats: 3
+agent_core:
+  enabled: true
+  execution_runs_path: "data/langgraph/execution_runs.sqlite"
+  direct_execution_confidence_threshold: 0.75
 context:
   max_tokens: 8192
   recent_turns: 8
@@ -14,6 +36,23 @@ knowledge:
   workspace: "knowledge"
   data_dir: "data/langgraph/rag"
   graph_output: "reports/knowledge_graph.html"
+  retrieval_confidence_threshold: 0.60
+web:
+  search_providers:
+    - name: "duckduckgo"
+      endpoint: "https://html.duckduckgo.com/html/"
+      kind: "duckduckgo_html"
+      enabled: true
+      timeout_seconds: 20
+  default_search_provider: "duckduckgo"
+webui:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8765
+  allow_lan: false
+  auth_token_env: null
+browser:
+  playwright_enabled: true
 checkpoint:
   backend: "sqlite"
   path: "data/langgraph/checkpoints.sqlite"

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 
 from aerospace_agent.langchain_agent.basic_agent import (
@@ -92,7 +93,13 @@ class EchoSkill(SkillBase):
 
 
 def _workspace(name: str) -> Path:
-    root = Path(".test_runs") / "langchain_basic_agent" / name
+    base = Path(
+        os.environ.get(
+            "AEROSPACE_TEST_ARTIFACT_ROOT",
+            str(Path(".test-artifacts") / "pytest"),
+        )
+    )
+    root = base / "langchain_basic_agent" / name
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
 

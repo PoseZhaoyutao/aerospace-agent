@@ -1,5 +1,13 @@
 """setuptools 打包配置。"""
+from glob import glob
+from pathlib import Path
 from setuptools import find_packages, setup
+
+
+def _workspace_files(pattern: str) -> list[str]:
+    """Return repository-relative runtime assets for sdist/wheel builds."""
+
+    return sorted(path for path in glob(pattern, recursive=True) if Path(path).is_file())
 
 setup(
     name="aerospace-agent",
@@ -21,6 +29,7 @@ setup(
         exclude=["astro_dynamics_mcp", "astro_dynamics_mcp.*",
                  "tests", "tests.*"],
     ),
+    py_modules=["start_langgraph_agent"],
     include_package_data=True,
     package_data={
         "aerospace_agent.mcp": [
@@ -28,7 +37,17 @@ setup(
             "examples/*.json",
             "prompts/*.md",
         ],
+        "aerospace_agent.web": ["static/**/*"],
     },
+    # Root-level runtime assets remain editable in development while also
+    # being present in built distributions under a stable share directory.
+    data_files=[
+        ("share/aerospace-agent/config", _workspace_files("config/*.yaml")),
+        ("share/aerospace-agent/knowledge", _workspace_files("knowledge/index.md") + _workspace_files("knowledge/log.md")),
+        ("share/aerospace-agent/knowledge/orbital-dynamics", _workspace_files("knowledge/orbital-dynamics/*.md")),
+        ("share/aerospace-agent/schemas/langgraph_agent", _workspace_files("schemas/langgraph_agent/*.json")),
+        ("share/aerospace-agent/docs", _workspace_files("docs/LANGGRAPH_AGENT.md")),
+    ],
     install_requires=[
         "numpy",
         "scipy",
@@ -39,12 +58,15 @@ setup(
         "langchain-core>=1.0,<2.0",
         "pydantic>=2.0,<3.0",
         "mcp>=1.0,<2.0",
+        "fastapi>=0.115,<1.0",
+        "uvicorn[standard]>=0.30,<1.0",
     ],
     extras_require={
         "plot": ["matplotlib"],
         "rich": ["rich"],
         "mcp-server": ["mcp>=1.0,<2.0"],
         "local-llm": ["openai>=1.0.0"],
+        "browser": ["playwright>=1.40,<2.0"],
         "engines": [
             "astropy",
             "poliastro",
@@ -55,7 +77,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "aerospace-agent=aerospace_agent.cli:main",
+            "aerospace-agent=start_langgraph_agent:main",
         ],
     },
     classifiers=[

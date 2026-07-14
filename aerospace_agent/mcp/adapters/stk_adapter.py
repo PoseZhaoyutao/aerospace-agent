@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import platform
+import os
 from typing import TYPE_CHECKING, Optional, Set
 
 from .base import BaseAdapter, AdapterError
@@ -143,6 +144,12 @@ class STKAdapter(BaseAdapter):
         if self._app is not None:
             return self._app
         if platform.system() != "Windows":
+            return None
+        # COM activation can hang in unattended sessions without an STK
+        # desktop/license service.  It is an explicit deployment opt-in; the
+        # availability API otherwise returns a bounded unavailable result.
+        if os.environ.get("AEROSPACE_ENABLE_STK_COM_PROBE", "").lower() not in {"1", "true", "yes"}:
+            self._license_ok = False
             return None
         # 优先 comtypes，回退 win32com
         try:
